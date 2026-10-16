@@ -1,0 +1,29 @@
+/* Light theme: colour tokens only (see dark.qss). */
+
+@bg:             #eef0f4;
+@surface:        #ffffff;
+@surface-raised: #f4f6f9;
+@surface-hover:  #e8ecf2;
+@border:         #d9dee7;
+@border-strong:  #b9c1cf;
+@text:           #1d222c;
+@text-muted:     #5f6878;
+@text-disabled:  #a2a9b6;
+@accent:         #2f6df0;
+@accent-hover:   #4a82f5;
+@accent-pressed: #2257cc;
+@accent-soft:    #bcd0fb;
+@on-accent:      #ffffff;
+@success:        #1e9e5a;
+@warning:        #b78312;
+@danger:         #d63b3b;
+@selection:      #b5cdfb;
+
+@fx-hover:       #10000000;
+@fx-press:       #22000000;
+@icon:           #3b4352;
+@icon-active:    #111620;
+@icon-disabled:  #a2a9b6;
+@icon-accent:    #2f6df0;
+@wave:           #2f6df0;
+@wave-idle:      #cfd5e0;

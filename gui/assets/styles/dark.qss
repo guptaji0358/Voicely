@@ -1,0 +1,31 @@
+/* Dark theme: colour tokens only. Each token is one line (at-sign, name, colon, value, semicolon);
+   ThemeManager substitutes them into components.qss. Add a theme by copying this file. */
+
+@bg:             #14161b;   /* window */
+@surface:        #1a1d24;   /* cards */
+@surface-raised: #20242c;   /* inputs, buttons */
+@surface-hover:  #272c36;
+@border:         #2a2f3a;
+@border-strong:  #3a4050;
+@text:           #dde1e9;
+@text-muted:     #8b93a4;
+@text-disabled:  #5d6475;
+@accent:         #3d7eff;
+@accent-hover:   #5a92ff;
+@accent-pressed: #2f68d8;
+@accent-soft:    #1f2d4d;   /* disabled accent surface */
+@on-accent:      #ffffff;
+@success:        #3ddc84;
+@warning:        #e5b84a;
+@danger:         #ff6b6b;
+@selection:      #2f5fc4;
+
+/* Used from C++ only (hover/press overlays, icon and waveform colours). #AARRGGBB. */
+@fx-hover:       #14ffffff;
+@fx-press:       #30000000;
+@icon:           #c4cad6;
+@icon-active:    #ffffff;
+@icon-disabled:  #5d6475;
+@icon-accent:    #6ea0ff;
+@wave:           #3d7eff;
+@wave-idle:      #2e3442;

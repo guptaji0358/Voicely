@@ -1,0 +1,30 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="styles/components.qss">../assets/styles/components.qss</file>
+    <file alias="styles/dark.qss">../assets/styles/dark.qss</file>
+    <file alias="styles/light.qss">../assets/styles/light.qss</file>
+    <file alias="icons/app-logo.svg">../assets/icons/app-logo.svg</file>
+    <file alias="icons/cancel.svg">../assets/icons/cancel.svg</file>
+    <file alias="icons/chevron-down.svg">../assets/icons/chevron-down.svg</file>
+    <file alias="icons/chevron-right.svg">../assets/icons/chevron-right.svg</file>
+    <file alias="icons/clear.svg">../assets/icons/clear.svg</file>
+    <file alias="icons/combo-arrow.svg">../assets/icons/combo-arrow.svg</file>
+    <file alias="icons/error.svg">../assets/icons/error.svg</file>
+    <file alias="icons/export-wav.svg">../assets/icons/export-wav.svg</file>
+    <file alias="icons/generate.svg">../assets/icons/generate.svg</file>
+    <file alias="icons/import.svg">../assets/icons/import.svg</file>
+    <file alias="icons/paste.svg">../assets/icons/paste.svg</file>
+    <file alias="icons/pause.svg">../assets/icons/pause.svg</file>
+    <file alias="icons/play.svg">../assets/icons/play.svg</file>
+    <file alias="icons/progress.svg">../assets/icons/progress.svg</file>
+    <file alias="icons/save-mp3.svg">../assets/icons/save-mp3.svg</file>
+    <file alias="icons/settings.svg">../assets/icons/settings.svg</file>
+    <file alias="icons/speaker.svg">../assets/icons/speaker.svg</file>
+    <file alias="icons/stop.svg">../assets/icons/stop.svg</file>
+    <file alias="icons/success.svg">../assets/icons/success.svg</file>
+    <file alias="icons/voice.svg">../assets/icons/voice.svg</file>
+    <file alias="icons/warning.svg">../assets/icons/warning.svg</file>
+    <file alias="illustrations/empty-audio.svg">../assets/illustrations/empty-audio.svg</file>
+    <file alias="illustrations/empty-input.svg">../assets/illustrations/empty-input.svg</file>
+  </qresource>
+</RCC>

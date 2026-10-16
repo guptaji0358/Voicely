@@ -1,0 +1,79 @@
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.exe
+*.dll
+*.obj
+*.o
+*.a
+*.lib
+*.pdb
+*.ilk
+*.exp
+*_autogen/
+.ninja_*
+build.ninja
+.qt/
+*.user
+*.autosave
+CMakeLists.txt.user*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+*.suo
+*.sln.docstates
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Logs and temp
+*.log
+*.tmp
+*.part
+tmp/
+temp/
+
+# Generated audio and evaluation output
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.pcm
+out/
+rating*.csv
+
+# Model weights (downloaded at runtime to %LOCALAPPDATA%\speech_engine\models)
+*.onnx
+*.bin
+*.pt
+*.pth
+*.safetensors
+models/
+
+# Secrets and credentials
+.env
+.env.*
+*.key
+*.pem
+secrets.*
+credentials*.json
+*api_key*

@@ -1,0 +1,13 @@
+numpy>=1.26
+sounddevice>=0.4.6
+# Local offline backend (Python >=3.10,<3.14)
+kokoro-onnx>=0.5.0,<0.7
+# Optional cloud backend (sends text to Google; needs GEMINI_API_KEY)
+google-genai>=2.25.0
+# MP3 export (LAME bundled; no FFmpeg needed)
+lameenc>=1.8
+# Optional: higher-quality resampling for 24k -> 44.1k MP3 (falls back to linear interpolation)
+scipy>=1.11
+# Tests only: independent MP3 decoder + test runner
+miniaudio>=1.60
+pytest>=8.0
