@@ -39,6 +39,7 @@ public:
     // offscreen platform, in the light theme, with TTS_NO_GL set, or if OpenGL/shaders fail (effectsFailed is emitted).
     bool setEffectsEnabled(bool on);
     GlStage *glStage() const { return m_gl; }
+    void setBusyCursor(bool on);                 // busy cursor on the window background while the engine works
 
 signals:
     void effectsFailed(const QString &reason);
@@ -54,6 +55,8 @@ protected:
 private:
     void rebuildBackdrop();
     void placeGl();
+    void applyBaseCursor();
+    bool m_busy = false;
     GlStage *m_gl = nullptr;
     bool m_custom, m_maximized = false;
     int m_inset;

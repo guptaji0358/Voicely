@@ -4,6 +4,9 @@
 #include "ProtocolClient.h"
 #include "ui/Buttons.h"
 #include "ui/Card.h"
+#include "ui/CursorPolicy.h"
+#include "ui/DropOverlay.h"
+#include "ui/UiSounds.h"
 #include "ui/DictionaryDialog.h"
 #include "ui/Frameless.h"
 #include "ui/GlStage.h"
@@ -40,6 +43,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMediaDevices>
+#include <QMimeData>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
 #include <QMediaPlayer>
@@ -233,7 +237,7 @@ void MainWindow::buildActions() {
     mk("Pronunciation dictionary…", "dictionary", QKeySequence("Ctrl+D"), [this] { openDictionary(); });
     mk("Model Lab…", "ai", QKeySequence("Ctrl+M"), [this] { openModelLab(); });
     mk("Save as MP3…", "save-mp3", QKeySequence::Save, [this] { saveMp3(); });
-    mk("Show / hide side panel", "settings", QKeySequence("Ctrl+B"), [this] { setPanelOpen(!m_panelOpen); });
+    mk("Show / hide side panel", "settings", QKeySequence("Ctrl+B"), [this] { UiSounds::instance().play(UiSounds::Sound::Toggle); setPanelOpen(!m_panelOpen); });
     mk("Settings…", "settings", QKeySequence("Ctrl+,"), [this] { openSettings(); });
     mk("Re-check backend", "recheck", QKeySequence(), [this] { startWorker(); });
     auto *sep = new QAction(this);
@@ -248,12 +252,16 @@ void MainWindow::buildUi() {
     setWindowIcon(Icons::icon("app-logo"));
     const bool custom = windowFlags().testFlag(Qt::FramelessWindowHint);
     setMinimumSize(custom ? 980 : 940, custom ? 700 : 660);
+    qApp->installEventFilter(new CursorPolicy(this));
+    UiSounds::instance().installClickFilter();
+    setAcceptDrops(true);
     m_shell = new ShellWidget(custom);
     setCentralWidget(m_shell);
     auto *outer = new QVBoxLayout(m_shell);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
 
+    m_drop = new DropOverlay(m_shell);
     m_titleBar = new TitleBar;
     m_titleBar->setVisible(custom);
     outer->addWidget(m_titleBar);
@@ -283,6 +291,7 @@ void MainWindow::buildUi() {
     auto *tb = newCard();
     auto *tl = static_cast<QVBoxLayout *>(tb->layout());
     m_text = new QPlainTextEdit;
+    m_text->viewport()->setCursor(Qt::IBeamCursor);
     m_text->setObjectName("textEditor");
     m_text->setMinimumHeight(240);
     m_inputEmpty = new EmptyState("empty-input", "Nothing to read yet", "Type, paste or import text to begin.", false, m_text->viewport());
@@ -633,6 +642,8 @@ void MainWindow::applyEffects() {
     updateGlActivity();
 }
 
+void MainWindow::previewDropOverlay() { m_drop->showHint("Drop to import text", "story.txt", true); }
+
 void MainWindow::feedDemoLevels(double t) {
     if (auto *gl = m_shell->glStage()) {
         gl->setWaveStrength(1.0);
@@ -670,6 +681,29 @@ void MainWindow::changeEvent(QEvent *e) {
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
+    if (obj == m_text->viewport()) {            // files dropped on the editor go through the same animated path
+        switch (e->type()) {
+        case QEvent::DragEnter: {
+            auto *d = static_cast<QDragEnterEvent *>(e);
+            if (d->mimeData()->hasUrls()) { dragEnterEvent(d); return true; }
+            break;
+        }
+        case QEvent::DragMove: {
+            auto *d = static_cast<QDragMoveEvent *>(e);
+            if (d->mimeData()->hasUrls()) { d->acceptProposedAction(); return true; }
+            break;
+        }
+        case QEvent::DragLeave:
+            m_drop->hideHint();
+            break;
+        case QEvent::Drop: {
+            auto *d = static_cast<QDropEvent *>(e);
+            if (d->mimeData()->hasUrls()) { dropEvent(d); return true; }
+            break;
+        }
+        default: break;
+        }
+    }
     if (obj == m_text->viewport() && e->type() == QEvent::Resize) m_inputEmpty->setGeometry(m_text->viewport()->rect());
     return QMainWindow::eventFilter(obj, e);
 }
@@ -714,6 +748,7 @@ void MainWindow::log(const QString &line) {
 }
 
 void MainWindow::setState(State s) {
+    if (s == State::Generating && m_state != State::Generating) UiSounds::instance().play(UiSounds::Sound::Generate);
     m_state = s;
     const bool idle = s == State::Idle;
     const bool busy = s == State::Generating || s == State::Exporting || s == State::Rechecking || s == State::Repairing;
@@ -738,6 +773,7 @@ void MainWindow::setState(State s) {
     }
     // The spinner shows only while the backend is actually working on something.
     m_busy->setVisible(busy);
+    m_shell->setBusyCursor(busy);
     if (!busy) m_progress->resetNow();
     m_qa->setBusy(s == State::Rechecking || s == State::Repairing,
                   s == State::Rechecking ? "Transcribing and comparing the speech…" : "Regenerating and rechecking the affected chunks…");
@@ -983,6 +1019,10 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
     m_jobId.clear();
     const Job job = m_job;
     m_job = Job::None;
+    if (job != Job::Preview) {                       // the preview plays its own audio
+        if (status == "success") UiSounds::instance().play(UiSounds::Sound::Success);
+        else if (status != "cancelled") UiSounds::instance().play(UiSounds::Sound::Error);
+    }
     if (status == "success") {
         switch (job) {
         case Job::Export: {
@@ -1478,10 +1518,14 @@ void MainWindow::importText() {
     const QString f = QFileDialog::getOpenFileName(this, "Import text", dir, "Text files (*.txt);;All files (*)");
     if (f.isEmpty()) return;
     Config::settings().setValue("lastDir", QFileInfo(f).absolutePath());
+    importFile(f);
+}
+
+bool MainWindow::importFile(const QString &f) {
     QFile file(f);
     if (!file.open(QIODevice::ReadOnly)) {
         setStatus("Cannot read " + f + ": " + file.errorString(), true);
-        return;
+        return false;
     }
     QByteArray bytes = file.readAll();
     if (bytes.startsWith("\xEF\xBB\xBF")) bytes.remove(0, 3);
@@ -1489,10 +1533,79 @@ void MainWindow::importText() {
     const QString text = dec(bytes);
     if (dec.hasError()) {
         setStatus("This file is not valid UTF-8. Re-save it as UTF-8 text and import again.", true);
-        return;
+        return false;
     }
     m_text->setPlainText(text);   // QPlainTextEdit keeps line breaks (paragraphs) as-is
     setStatus(QString("Imported %1").arg(QDir::toNativeSeparators(f)));
+    return true;
+}
+
+// ---------------------------------------------------------------- drag & drop
+QStringList MainWindow::droppedTextFiles(const QMimeData *m) const {
+    static const QStringList ok{"txt", "md", "markdown", "text", "log", "rtf_txt"};
+    QStringList out;
+    if (m && m->hasUrls())
+        for (const QUrl &u : m->urls())
+            if (u.isLocalFile() && ok.contains(QFileInfo(u.toLocalFile()).suffix().toLower())) out << u.toLocalFile();
+    return out;
+}
+
+bool MainWindow::dragAcceptable(const QMimeData *m) const {
+    return m && ((m->hasUrls() && !droppedTextFiles(m).isEmpty()) || (!m->hasUrls() && m->hasText()));
+}
+
+void MainWindow::dragHint(const QMimeData *m) {
+    const bool ok = dragAcceptable(m);
+    const QStringList files = droppedTextFiles(m);
+    if (ok && !files.isEmpty())
+        m_drop->showHint("Drop to import text", QFileInfo(files.first()).fileName() + (files.size() > 1 ? QString("  (+%1 more, first one is used)").arg(files.size() - 1) : QString()), true);
+    else if (ok)
+        m_drop->showHint("Drop to add this text", "It will be appended to the editor", true);
+    else
+        m_drop->showHint("Can't use this", "Drop a text file (.txt, .md) or some text", false);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *e) {
+    if (!m_drop->active()) UiSounds::instance().play(UiSounds::Sound::DragOver);
+    dragHint(e->mimeData());
+    if (dragAcceptable(e->mimeData())) e->acceptProposedAction();
+    else e->ignore();
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *e) {
+    if (dragAcceptable(e->mimeData())) e->acceptProposedAction();
+    else e->ignore();
+}
+
+void MainWindow::dragLeaveEvent(QDragLeaveEvent *e) {
+    m_drop->hideHint();
+    QMainWindow::dragLeaveEvent(e);
+}
+
+void MainWindow::dropEvent(QDropEvent *e) {
+    handleDrop(e->mimeData(), m_shell->mapFromGlobal(mapToGlobal(e->position().toPoint())));
+    e->acceptProposedAction();
+}
+
+void MainWindow::handleDrop(const QMimeData *m, const QPointF &at) {
+    m_drop->ripple(at - QPointF(m_shell->contentsMargins().left(), m_shell->contentsMargins().top()));
+    m_drop->hideHint();
+    if (!dragAcceptable(m)) {
+        UiSounds::instance().play(UiSounds::Sound::Error);
+        setStatus("Only text files (.txt, .md) or plain text can be dropped here.", true);
+        return;
+    }
+    const QStringList files = droppedTextFiles(m);
+    if (!files.isEmpty()) {
+        if (importFile(files.first())) UiSounds::instance().play(UiSounds::Sound::Drop);
+        else UiSounds::instance().play(UiSounds::Sound::Error);
+        if (files.size() > 1) setStatus(m_status->text() + QString("  (only the first of %1 files was imported)").arg(files.size()));
+        return;
+    }
+    const QString txt = m->text();
+    m_text->setPlainText(m_text->toPlainText().isEmpty() ? txt : m_text->toPlainText() + "\n\n" + txt);
+    UiSounds::instance().play(UiSounds::Sound::Drop);
+    setStatus("Added the dropped text.");
 }
 
 void MainWindow::updateCounts() {
@@ -1530,6 +1643,8 @@ void MainWindow::openSettings() {
     reduce->setChecked(Config::settings().value("reduceMotion", false).toBool());
     auto *fx = new QCheckBox("3D visual effects (OpenGL background, orb and waveform)");
     fx->setChecked(Config::settings().value("effects", true).toBool());
+    auto *snd = new QCheckBox("UI sound effects (clicks, drop, success)");
+    snd->setChecked(UiSounds::instance().enabled());
     auto *native = new QCheckBox("Use the standard Windows title bar (takes effect after restart)");
     native->setChecked(Config::settings().value("nativeFrame", false).toBool());
     auto browse = [&](QLineEdit *e, bool dir) {
@@ -1550,6 +1665,7 @@ void MainWindow::openSettings() {
     form->addRow("Theme", theme);
     form->addRow("", reduce);
     form->addRow("", fx);
+    form->addRow("", snd);
     form->addRow("", native);
     auto *note = new QLabel("The API key is held in memory and passed to the worker; it is never written to disk. "
                             "Set GEMINI_API_KEY in your user environment for a persistent key. Saving restarts the worker.");
@@ -1578,6 +1694,7 @@ void MainWindow::openSettings() {
     Config::settings().setValue("reduceMotion", reduce->isChecked());
     Config::settings().setValue("nativeFrame", native->isChecked());
     Config::settings().setValue("effects", fx->isChecked());
+    UiSounds::instance().setEnabled(snd->isChecked());
     applyEffects();
     Config::settings().setValue("theme", theme->currentText());
     if (theme->currentText() != ThemeManager::instance().current()) {

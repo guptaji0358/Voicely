@@ -35,6 +35,7 @@ int main(int argc, char *argv[]) {
             });
             demo->start(30);
         }
+        if (!qEnvironmentVariableIsEmpty("TTS_SNAPSHOT_DROP")) QTimer::singleShot(6500, &w, [&w] { w.previewDropOverlay(); });
         QTimer::singleShot(8000, &w, [&w, &app, snap, sample] {
             if (!sample.isEmpty()) w.setProperty("snapshotText", sample);
             w.grab().save(snap);

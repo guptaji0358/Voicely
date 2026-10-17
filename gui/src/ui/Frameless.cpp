@@ -218,13 +218,24 @@ void ShellWidget::paintEvent(QPaintEvent *) {
     p.drawPixmap(0, 0, m_backdrop);
 }
 
+void ShellWidget::applyBaseCursor() { setCursor(m_busy ? Qt::BusyCursor : Qt::ArrowCursor); }
+
+void ShellWidget::setBusyCursor(bool on) {
+    m_busy = on;
+    applyBaseCursor();
+}
+
 void ShellWidget::mouseMoveEvent(QMouseEvent *e) {
-    if (m_custom && !m_maximized) setCursor(Frameless::cursorFor(Frameless::edgesAt(e->position().toPoint(), size())));
+    if (m_custom && !m_maximized) {
+        const Qt::Edges edges = Frameless::edgesAt(e->position().toPoint(), size());
+        if (edges) setCursor(Frameless::cursorFor(edges));
+        else applyBaseCursor();
+    }
     QWidget::mouseMoveEvent(e);
 }
 
 void ShellWidget::leaveEvent(QEvent *e) {
-    unsetCursor();
+    applyBaseCursor();
     QWidget::leaveEvent(e);
 }
 

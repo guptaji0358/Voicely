@@ -45,6 +45,13 @@
     <file alias="icons/window-maximize.svg">../assets/icons/window-maximize.svg</file>
     <file alias="icons/window-minimize.svg">../assets/icons/window-minimize.svg</file>
     <file alias="icons/window-restore.svg">../assets/icons/window-restore.svg</file>
+    <file alias="sounds/click.wav">../assets/sounds/click.wav</file>
+    <file alias="sounds/toggle.wav">../assets/sounds/toggle.wav</file>
+    <file alias="sounds/generate.wav">../assets/sounds/generate.wav</file>
+    <file alias="sounds/success.wav">../assets/sounds/success.wav</file>
+    <file alias="sounds/error.wav">../assets/sounds/error.wav</file>
+    <file alias="sounds/dragover.wav">../assets/sounds/dragover.wav</file>
+    <file alias="sounds/drop.wav">../assets/sounds/drop.wav</file>
     <file alias="illustrations/empty-audio.svg">../assets/illustrations/empty-audio.svg</file>
     <file alias="illustrations/empty-input.svg">../assets/illustrations/empty-input.svg</file>
   </qresource>

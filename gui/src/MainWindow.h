@@ -3,6 +3,10 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QMainWindow>
 #include <QMap>
 #include <QPair>
@@ -34,6 +38,8 @@ class QLineEdit;
 class QMediaPlayer;
 class QScrollArea;
 class VoiceCarousel;
+class DropOverlay;
+class QMimeData;
 class QPlainTextEdit;
 class QPushButton;
 class QSlider;
@@ -48,6 +54,7 @@ public:
     ~MainWindow() override;
 
     enum class State { Starting, Idle, Generating, Exporting, Unavailable, Rechecking, Repairing };
+    void previewDropOverlay();              // developer aid (TTS_SNAPSHOT_DROP)
     void feedDemoLevels(double t);          // developer aid (TTS_SNAPSHOT_DEMO): synthetic levels to show the 3D waveform
     void applyEffects();                    // (re)creates the OpenGL 3D stage according to the setting
     void setPanelOpen(bool open, bool animate = true);
@@ -76,6 +83,10 @@ protected:
     void changeEvent(QEvent *e) override;
     void showEvent(QShowEvent *e) override;
     bool eventFilter(QObject *obj, QEvent *e) override;
+    void dragEnterEvent(QDragEnterEvent *e) override;
+    void dragMoveEvent(QDragMoveEvent *e) override;
+    void dragLeaveEvent(QDragLeaveEvent *e) override;
+    void dropEvent(QDropEvent *e) override;
 
 private slots:
     void onReady();
@@ -97,6 +108,11 @@ private:
     enum class Job { None, Synth, Preview, Export, Recheck, Repair };
     void buildUi();
     void updateGlActivity();
+    bool importFile(const QString &path);
+    QStringList droppedTextFiles(const QMimeData *m) const;
+    bool dragAcceptable(const QMimeData *m) const;
+    void dragHint(const QMimeData *m);
+    void handleDrop(const QMimeData *m, const QPointF &at);
     void buildActions();
     void setState(State s);
     void setStatus(const QString &text, bool error = false);
@@ -139,6 +155,7 @@ private:
     QString m_sessionApiKey;
 
     ShellWidget *m_shell;
+    DropOverlay *m_drop = nullptr;
     QScrollArea *m_sideScroll = nullptr;
     VoiceCarousel *m_carousel = nullptr;
     bool m_panelOpen = true;

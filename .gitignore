@@ -54,6 +54,7 @@ temp/
 
 # Generated audio and evaluation output
 *.wav
+!gui/assets/sounds/*.wav
 *.mp3
 *.flac
 *.ogg

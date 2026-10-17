@@ -12,7 +12,7 @@ find_package(Python3 COMPONENTS Interpreter)   # only used to run the tests
 add_library(ttscore STATIC
   src/ProtocolClient.cpp src/MainWindow.cpp
   src/ui/Motion.cpp src/ui/ThemeManager.cpp src/ui/Icons.cpp src/ui/Buttons.cpp src/ui/Indicators.cpp
-  src/ui/Card.cpp src/ui/GlStage.cpp src/ui/VoiceCarousel.cpp src/ui/Frameless.cpp src/ui/QaPanel.cpp src/ui/DictionaryDialog.cpp src/ui/ReviewDialog.cpp src/ui/PronSettings.cpp src/ui/ModelLabDialog.cpp
+  src/ui/Card.cpp src/ui/GlStage.cpp src/ui/VoiceCarousel.cpp src/ui/DropOverlay.cpp src/ui/UiSounds.cpp src/ui/Frameless.cpp src/ui/QaPanel.cpp src/ui/DictionaryDialog.cpp src/ui/ReviewDialog.cpp src/ui/PronSettings.cpp src/ui/ModelLabDialog.cpp
   resources/resources.qrc)   # QSS themes + SVG icons, addressed as :/styles/*, :/icons/*, :/illustrations/*
 target_include_directories(ttscore PUBLIC src)
 target_link_libraries(ttscore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg Qt6::OpenGL Qt6::OpenGLWidgets)

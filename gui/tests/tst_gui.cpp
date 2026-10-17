@@ -6,6 +6,8 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
+#include <QMimeData>
+#include <QUrl>
 #include <QMediaPlayer>
 #include <QPlainTextEdit>
 #include <QProgressBar>
@@ -52,6 +54,46 @@ private slots:
         QVERIFY(found);
         QTest::mouseClick(get<QPushButton>("clearButton"), Qt::LeftButton);
         QVERIFY(ed->toPlainText().isEmpty());
+    }
+    void dropTextFileImportsAndRejectsOthers() {
+        auto *ed = get<QPlainTextEdit>("textEditor");
+        ed->clear();
+        QTemporaryDir dir;
+        QFile f(dir.filePath("story.txt"));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("Dropped paragraph one.\n\nDropped paragraph two.");
+        f.close();
+        {   // a text file dropped on the window is imported
+            QMimeData mime;
+            mime.setUrls({QUrl::fromLocalFile(f.fileName())});
+            QDragEnterEvent enter(QPoint(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &enter);
+            QVERIFY(enter.isAccepted());
+            QDropEvent drop(QPointF(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &drop);
+            QCOMPARE(ed->toPlainText(), QString("Dropped paragraph one.\n\nDropped paragraph two."));
+            QVERIFY(get<QLabel>("statusLabel")->text().startsWith("Imported"));
+        }
+        {   // an unsupported file type is refused and the text is untouched
+            QMimeData mime;
+            mime.setUrls({QUrl::fromLocalFile(dir.filePath("picture.png"))});
+            QDragEnterEvent enter(QPoint(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &enter);
+            QVERIFY(!enter.isAccepted());
+            QDragLeaveEvent leave;
+            QApplication::sendEvent(w, &leave);
+        }
+        {   // plain text is appended
+            QMimeData mime;
+            mime.setText("Extra words.");
+            QDragEnterEvent enter(QPoint(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &enter);
+            QVERIFY(enter.isAccepted());
+            QDropEvent drop(QPointF(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &drop);
+            QVERIFY2(ed->toPlainText().endsWith("Extra words."), qPrintable(ed->toPlainText() + " | " + get<QLabel>("statusLabel")->text()));
+        }
+        ed->clear();
     }
     void emptyTextIsRejected() {
         QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);
