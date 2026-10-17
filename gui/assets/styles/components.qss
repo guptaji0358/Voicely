@@ -142,6 +142,8 @@ QTabBar::tab:selected { color: @text; border-bottom: 2px solid @accent; }
 QStatusBar { background: transparent; }
 
 /* ---- 3D glass additions */
+QPushButton[compact="true"] { padding: 2px 12px; min-height: 18px; }
+QComboBox[compact="true"] { padding: 2px 8px; min-height: 18px; }
 QToolButton#panelToggle { color: @text; padding: 4px 10px; border-radius: @radius; }
 QToolButton#panelToggle:checked { background: @accent-softer; color: @accent-top; }
 QWidget#voiceStripInner { background: transparent; }

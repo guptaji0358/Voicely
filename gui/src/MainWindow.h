@@ -39,6 +39,7 @@ class QMediaPlayer;
 class QScrollArea;
 class VoiceCarousel;
 class DropOverlay;
+class AudioDragHandle;
 class QMimeData;
 class QPlainTextEdit;
 class QPushButton;
@@ -69,7 +70,7 @@ public slots:
     void startWorker();
     void generate(bool testVoice = false);   // testVoice: short preview of the selected voice (does not touch the main audio)
     void cancelJob();
-    void exportAudio(const QString &path, const QString &format);   // used by the Save buttons and tests
+    void exportAudio(const QString &path, const QString &format, bool temp = false);   // Save buttons, tests; temp = silent drag file
     void analyzeText(bool thenGenerate);
     void recheckSpeech();
     void runRepair(const QString &mode, const QJsonArray &chunks, const QJsonArray &candidates);
@@ -114,6 +115,12 @@ private:
     void dragHint(const QMimeData *m);
     void handleDrop(const QMimeData *m, const QPointF &at);
     void buildActions();
+    // Temporary audio for dragging into other apps (no save dialog). Files live in <temp>/Voicely-audio and are removed
+    // automatically after N days (setting tempKeepDays) or via the menu; unused leftovers are deleted when the audio changes.
+    QString tempAudioDir() const;
+    QString tempAudioFile();                // the file to hand over for the chosen format, or empty if not ready
+    void prepareTempAudio();
+    void purgeTempAudio(int olderThanDays, int *removed = nullptr, qint64 *bytes = nullptr);
     void setState(State s);
     void setStatus(const QString &text, bool error = false);
     void log(const QString &line);
@@ -156,6 +163,9 @@ private:
 
     ShellWidget *m_shell;
     DropOverlay *m_drop = nullptr;
+    AudioDragHandle *m_dragHandle = nullptr;
+    QString m_dragFormat = "wav", m_tempStem, m_tempFor, m_tempWav, m_tempMp3;
+    bool m_tempExport = false, m_tempUsed = false;
     QScrollArea *m_sideScroll = nullptr;
     VoiceCarousel *m_carousel = nullptr;
     bool m_panelOpen = true;

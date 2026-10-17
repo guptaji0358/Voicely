@@ -1,5 +1,6 @@
 // GUI tests (offscreen): drive the real MainWindow against the real worker (mock backend).
 #include "MainWindow.h"
+#include "ui/AudioDragHandle.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -94,6 +95,27 @@ private slots:
             QVERIFY2(ed->toPlainText().endsWith("Extra words."), qPrintable(ed->toPlainText() + " | " + get<QLabel>("statusLabel")->text()));
         }
         ed->clear();
+    }
+    void tempAudioDragFile() {
+        get<QPlainTextEdit>("textEditor")->setPlainText("Hello temp audio.");
+        QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);
+        QCOMPARE(w->state(), MainWindow::State::Generating);
+        waitState(MainWindow::State::Idle);
+        auto *h = w->findChild<AudioDragHandle *>();
+        QVERIFY(h);
+        QTRY_COMPARE(h->state(), AudioDragHandle::State::Ready);
+        const QString wav = h->fileForDrag();                       // WAV: a temporary copy made on demand
+        QVERIFY(QFileInfo::exists(wav));
+        QVERIFY(wav.contains("Voicely-audio"));
+        QVERIFY(wav.endsWith(".wav", Qt::CaseInsensitive));
+        QVERIFY(QFileInfo(wav).fileName().startsWith("hello-temp-audio"));
+        emit h->formatChanged("mp3");                               // MP3: exported silently by the worker
+        QTRY_VERIFY_WITH_TIMEOUT(h->state() == AudioDragHandle::State::Ready && h->fileForDrag().endsWith(".mp3"), 20000);
+        QVERIFY(QFileInfo::exists(h->fileForDrag()));
+        QVERIFY(QFileInfo(h->fileForDrag()).size() > 0);
+        emit h->formatChanged("wav");
+        QCOMPARE(w->state(), MainWindow::State::Idle);
+        get<QPlainTextEdit>("textEditor")->clear();                 // later tests expect an empty editor
     }
     void emptyTextIsRejected() {
         QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);

@@ -12,6 +12,7 @@
 class AnimatedButton;
 class GlStage;
 class IconWidget;
+class QHBoxLayout;
 class QLabel;
 class QMenu;
 class QToolButton;
@@ -78,6 +79,7 @@ public:
     QWidget *orbSlot() const { return m_orbSlot; }          // where the 3D orb is drawn (when effects are on)
     void setOrbMode(bool on);                               // orb slot replaces the flat logo
     QToolButton *panelButton() const { return m_panelBtn; } // shows / hides the side panel
+    void addCenterWidget(QWidget *w);                       // controls placed in the free middle of the bar (export, drag)
 
 protected:
     void mousePressEvent(QMouseEvent *) override;
@@ -90,6 +92,7 @@ private:
     QPoint m_pressPos;
     bool m_dragArmed = false;
     AnimatedButton *m_min, *m_max, *m_close;
+    QHBoxLayout *m_center = nullptr;
     QToolButton *m_menuBtn, *m_panelBtn;
     QWidget *m_logo, *m_orbSlot;
     QMenu *m_menu;

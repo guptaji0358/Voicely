@@ -310,6 +310,11 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     h->addWidget(m_state);
     h->addWidget(m_chip);
     h->addStretch(1);
+    m_center = new QHBoxLayout;                     // the free middle of the bar: export + drag controls
+    m_center->setContentsMargins(0, 0, 0, 0);
+    m_center->setSpacing(8);
+    h->addLayout(m_center);
+    h->addStretch(1);
     h->addWidget(m_panelBtn);
     h->addWidget(m_menuBtn);
     h->addSpacing(8);
@@ -321,6 +326,8 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     connect(m_max, &QPushButton::clicked, this, &TitleBar::toggleMaximize);
     connect(m_close, &QPushButton::clicked, this, [this] { window()->close(); });
 }
+
+void TitleBar::addCenterWidget(QWidget *w) { m_center->addWidget(w); }
 
 void TitleBar::setOrbMode(bool on) {
     m_logo->setVisible(!on);

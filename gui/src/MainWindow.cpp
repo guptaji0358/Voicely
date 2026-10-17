@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "ProtocolClient.h"
 #include "ui/Buttons.h"
+#include "ui/AudioDragHandle.h"
 #include "ui/Card.h"
 #include "ui/CursorPolicy.h"
 #include "ui/DropOverlay.h"
@@ -44,6 +45,8 @@
 #include <QLineEdit>
 #include <QMediaDevices>
 #include <QMimeData>
+#include <QSpinBox>
+#include <QDateTime>
 #include <QPropertyAnimation>
 #include <QVariantAnimation>
 #include <QMediaPlayer>
@@ -117,6 +120,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
                        Qt::WindowCloseButtonHint | Qt::WindowSystemMenuHint);
         setAttribute(Qt::WA_TranslucentBackground);
     }
+    QTimer::singleShot(3000, this, [this] { purgeTempAudio(Config::settings().value("tempKeepDays", 3).toInt()); });
     m_tmp = new QTemporaryDir;     // unique per window; removed on exit
     m_tempDir = m_tmp->path();
     // The main player must be the first QMediaPlayer child (tests look it up with findChild).
@@ -239,6 +243,16 @@ void MainWindow::buildActions() {
     mk("Save as MP3…", "save-mp3", QKeySequence::Save, [this] { saveMp3(); });
     mk("Show / hide side panel", "settings", QKeySequence("Ctrl+B"), [this] { UiSounds::instance().play(UiSounds::Sound::Toggle); setPanelOpen(!m_panelOpen); });
     mk("Settings…", "settings", QKeySequence("Ctrl+,"), [this] { openSettings(); });
+    mk("Clear temp audio files", "delete", QKeySequence(), [this] {
+        int n = 0;
+        qint64 b = 0;
+        purgeTempAudio(0, &n, &b);
+        m_tempWav.clear();
+        m_tempMp3.clear();
+        prepareTempAudio();
+        setStatus(n ? QString("Removed %1 temp audio file(s), freed %2 MB.").arg(n).arg(b / 1048576.0, 0, 'f', 1)
+                    : QString("No temp audio files to remove."));
+    });
     mk("Re-check backend", "recheck", QKeySequence(), [this] { startWorker(); });
     auto *sep = new QAction(this);
     sep->setSeparator(true);
@@ -367,13 +381,31 @@ void MainWindow::buildUi() {
     m_bitrate->setObjectName("bitrateCombo");
     for (int b : {128, 160, 192, 256, 320}) m_bitrate->addItem(QString("%1 kbps").arg(b), b);
     m_bitrate->setCurrentIndex(2);
-    m_saveMp3 = button("Save as MP3…", "save-mp3", "saveMp3Button");
-    m_saveWav = button("Save WAV…", "export-wav", "saveWavButton");
+    m_saveMp3 = button("Save MP3", "save-mp3", "saveMp3Button");
+    m_saveWav = button("Save WAV", "export-wav", "saveWavButton");
+    m_saveMp3->setToolTip("Save as MP3 (uses the quality chosen next to it)");
+    m_saveWav->setToolTip("Save as WAV (lossless)");
+    m_bitrate->setToolTip("MP3 quality");
+    for (QWidget *w : {static_cast<QWidget *>(m_saveMp3), static_cast<QWidget *>(m_saveWav), static_cast<QWidget *>(m_bitrate)})
+        w->setProperty("compact", true);
+    m_dragHandle = new AudioDragHandle;
+    m_dragFormat = Config::settings().value("dragFormat", "wav").toString() == "mp3" ? "mp3" : "wav";
+    m_dragHandle->setFormat(m_dragFormat);
+    m_dragHandle->setProvider([this] { return tempAudioFile(); });
     m_success = new SuccessBadge;
-    a3->addWidget(fieldLabel("MP3"));
-    a3->addWidget(m_bitrate);
-    a3->addWidget(m_saveMp3);
-    a3->addWidget(m_saveWav);
+    if (custom) {                                   // export + drag controls live in the free middle of the title bar
+        m_bitrate->setFixedWidth(96);
+        m_titleBar->addCenterWidget(m_bitrate);
+        m_titleBar->addCenterWidget(m_saveMp3);
+        m_titleBar->addCenterWidget(m_saveWav);
+        m_titleBar->addCenterWidget(m_dragHandle);
+    } else {                                        // native window frame: keep them in the player bar
+        a3->addWidget(fieldLabel("MP3"));
+        a3->addWidget(m_bitrate);
+        a3->addWidget(m_saveMp3);
+        a3->addWidget(m_saveWav);
+        a3->addWidget(m_dragHandle);
+    }
     a3->addWidget(m_success);
     a3->addStretch(1);
     al->addLayout(a3);
@@ -551,6 +583,22 @@ void MainWindow::buildUi() {
     connect(m_stop, &QPushButton::clicked, this, &MainWindow::stopPlay);
     connect(m_saveMp3, &QPushButton::clicked, this, &MainWindow::saveMp3);
     connect(m_saveWav, &QPushButton::clicked, this, &MainWindow::saveWav);
+    connect(m_dragHandle, &AudioDragHandle::formatChanged, this, [this](const QString &f) {
+        m_dragFormat = f;
+        Config::settings().setValue("dragFormat", f);
+        prepareTempAudio();
+    });
+    connect(m_dragHandle, &AudioDragHandle::copied, this, [this](const QString &f) {
+        m_tempUsed = true;
+        UiSounds::instance().play(UiSounds::Sound::Drop);
+        setStatus("Copied " + QFileInfo(f).fileName() + " - paste it into Explorer or your editor.");
+    });
+    connect(m_dragHandle, &AudioDragHandle::dragged, this, [this](const QString &f, bool ok) {
+        if (!ok) return;
+        m_tempUsed = true;
+        UiSounds::instance().play(UiSounds::Sound::Drop);
+        setStatus("Dropped " + QFileInfo(f).fileName() + " (temporary file).");
+    });
     connect(m_backend, &QComboBox::currentIndexChanged, this, &MainWindow::backendChanged);
     connect(m_seek, &QSlider::sliderPressed, this, [this] { m_seeking = true; });
     connect(m_seek, &QSlider::sliderReleased, this, [this] {
@@ -783,6 +831,7 @@ void MainWindow::setState(State s) {
     updateAudioPanel();
     updatePreviewUi();
     updateGlActivity();
+    prepareTempAudio();
 }
 
 void MainWindow::updateAudioPanel() {
@@ -1019,7 +1068,9 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
     m_jobId.clear();
     const Job job = m_job;
     m_job = Job::None;
-    if (job != Job::Preview) {                       // the preview plays its own audio
+    const bool tempExp = job == Job::Export && m_tempExport;     // silent export of the MP3 used for dragging
+    m_tempExport = false;
+    if (job != Job::Preview && !tempExp) {           // the preview plays its own audio
         if (status == "success") UiSounds::instance().play(UiSounds::Sound::Success);
         else if (status != "cancelled") UiSounds::instance().play(UiSounds::Sound::Error);
     }
@@ -1028,6 +1079,14 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         case Job::Export: {
             const QString out = r.value("output_path").toString();
             QFileInfo fi(out);
+            if (tempExp) {
+                if (fi.exists() && fi.size() > 0) setStatus("MP3 ready - drag it from the title bar.");
+                else {
+                    m_tempMp3.clear();
+                    setStatus("Could not prepare the MP3 for dragging.", true);
+                }
+                break;
+            }
             if (!fi.exists() || fi.size() == 0) {
                 setStatus("Export reported success but the file is missing or empty: " + out, true);
             } else {
@@ -1084,6 +1143,11 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
                           .arg(r.value("backend").toString(), r.value("voice").toString()));
             break;
         }
+    } else if (tempExp) {                              // temp MP3 failed: fall back to WAV so dragging still works
+        m_tempMp3.clear();
+        m_dragFormat = "wav";
+        m_dragHandle->setFormat("wav");
+        setStatus("Could not prepare the MP3 for dragging; using WAV instead. " + message, true);
     } else if (status == "cancelled") {
         setStatus("Cancelled.");
     } else {
@@ -1259,20 +1323,22 @@ void MainWindow::loadAudio(const QString &path) {
     m_player->setSource(QUrl::fromLocalFile(path));
     const bool rep = !m_candidatePath.isEmpty() && path == m_candidatePath;
     m_outLabel->setText((rep ? "Repaired version (not accepted yet): " : "Preview: ") + QDir::toNativeSeparators(path) +
-                        "  (temporary — use Save to keep it)");
+                        "  (temporary - drag it from the title bar or use Save)");
+    prepareTempAudio();
 }
 
-void MainWindow::exportAudio(const QString &path, const QString &format) {
+void MainWindow::exportAudio(const QString &path, const QString &format, bool temp) {
     if (m_state != State::Idle || m_audioPath.isEmpty()) return;
     QJsonObject p{{"input_path", m_audioPath}, {"output_path", path}, {"output_format", format},
                   {"overwrite", true}};   // overwrite was confirmed by the native save dialog
     if (format == "mp3") p["bitrate_kbps"] = m_bitrate->currentData().toInt();
     m_jobIsTest = false;
+    m_tempExport = temp;
     m_job = Job::Export;
     m_jobId = m_client->request("export", p);
     m_progress->resetNow();
     setState(State::Exporting);
-    setStatus("Exporting…");
+    setStatus(temp ? "Preparing the MP3 for dragging…" : "Exporting…");
 }
 
 void MainWindow::saveMp3() {
@@ -1608,6 +1674,76 @@ void MainWindow::handleDrop(const QMimeData *m, const QPointF &at) {
     setStatus("Added the dropped text.");
 }
 
+QString MainWindow::tempAudioDir() const { return QDir::tempPath() + "/Voicely-audio"; }
+
+void MainWindow::prepareTempAudio() {
+    if (!m_dragHandle) return;
+    const bool have = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
+    if (!have) {
+        m_dragHandle->setState(AudioDragHandle::State::NoAudio);
+        m_tempFor.clear();
+        return;
+    }
+    if (m_tempFor != m_audioPath) {                    // new audio: delete the previous temp files if nobody used them
+        if (!m_tempUsed) {
+            if (!m_tempWav.isEmpty()) QFile::remove(m_tempWav);
+            if (!m_tempMp3.isEmpty()) QFile::remove(m_tempMp3);
+        }
+        m_tempWav.clear();
+        m_tempMp3.clear();
+        m_tempUsed = false;
+        m_tempFor = m_audioPath;
+        QString s = m_text->toPlainText().simplified().left(80).toLower();
+        s.replace(QRegularExpression("[^a-z0-9]+"), "-");
+        while (s.startsWith('-')) s.remove(0, 1);
+        s = s.left(32);
+        while (s.endsWith('-')) s.chop(1);
+        if (s.isEmpty()) s = "speech";
+        m_tempStem = s + "-" + QDateTime::currentDateTime().toString("MMdd-HHmmss");
+    }
+    if (m_dragFormat != "mp3" || (!m_tempMp3.isEmpty() && QFileInfo::exists(m_tempMp3) && !m_tempExport)) {
+        m_dragHandle->setState(AudioDragHandle::State::Ready);
+        return;
+    }
+    m_dragHandle->setState(AudioDragHandle::State::Preparing);
+    if (m_state == State::Idle && !m_tempExport) {      // the MP3 needs the worker; start it once the app is idle
+        QDir().mkpath(tempAudioDir());
+        m_tempMp3 = tempAudioDir() + "/" + m_tempStem + ".mp3";
+        exportAudio(m_tempMp3, "mp3", true);
+    }
+}
+
+QString MainWindow::tempAudioFile() {
+    if (m_audioPath.isEmpty() || !QFileInfo::exists(m_audioPath)) return {};
+    prepareTempAudio();
+    if (m_dragFormat == "mp3") return (!m_tempExport && QFileInfo::exists(m_tempMp3)) ? m_tempMp3 : QString();
+    if (m_tempWav.isEmpty() || !QFileInfo::exists(m_tempWav)) {     // WAV: a plain copy, made only when it is needed
+        QDir().mkpath(tempAudioDir());
+        const QString dst = tempAudioDir() + "/" + m_tempStem + "." + QFileInfo(m_audioPath).suffix();
+        QFile::remove(dst);
+        if (!QFile::copy(m_audioPath, dst)) {
+            setStatus("Could not create the temporary audio file in " + QDir::toNativeSeparators(tempAudioDir()), true);
+            return {};
+        }
+        m_tempWav = dst;
+    }
+    return m_tempWav;
+}
+
+void MainWindow::purgeTempAudio(int olderThanDays, int *removed, qint64 *bytes) {
+    const QDateTime cutoff = olderThanDays > 0 ? QDateTime::currentDateTime().addDays(-olderThanDays) : QDateTime::currentDateTime().addDays(1);
+    int n = 0;
+    qint64 b = 0;
+    const auto files = QDir(tempAudioDir()).entryInfoList(QDir::Files);
+    for (const QFileInfo &fi : files) {
+        if (fi.lastModified() >= cutoff) continue;
+        const qint64 sz = fi.size();
+        if (QFile::remove(fi.filePath())) { ++n; b += sz; }
+    }
+    if (removed) *removed = n;
+    if (bytes) *bytes = b;
+}
+
 void MainWindow::updateCounts() {
     const QString t = m_text->toPlainText();
     const int words = t.isEmpty() ? 0 : t.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).size();
@@ -1645,6 +1781,11 @@ void MainWindow::openSettings() {
     fx->setChecked(Config::settings().value("effects", true).toBool());
     auto *snd = new QCheckBox("UI sound effects (clicks, drop, success)");
     snd->setChecked(UiSounds::instance().enabled());
+    auto *keep = new QSpinBox;
+    keep->setRange(1, 60);
+    keep->setSuffix(" days");
+    keep->setValue(Config::settings().value("tempKeepDays", 3).toInt());
+    keep->setToolTip("Audio dragged out of the title bar is a temporary file; files older than this are deleted automatically.");
     auto *native = new QCheckBox("Use the standard Windows title bar (takes effect after restart)");
     native->setChecked(Config::settings().value("nativeFrame", false).toBool());
     auto browse = [&](QLineEdit *e, bool dir) {
@@ -1666,6 +1807,7 @@ void MainWindow::openSettings() {
     form->addRow("", reduce);
     form->addRow("", fx);
     form->addRow("", snd);
+    form->addRow("Delete temp audio after", keep);
     form->addRow("", native);
     auto *note = new QLabel("The API key is held in memory and passed to the worker; it is never written to disk. "
                             "Set GEMINI_API_KEY in your user environment for a persistent key. Saving restarts the worker.");
@@ -1694,6 +1836,7 @@ void MainWindow::openSettings() {
     Config::settings().setValue("reduceMotion", reduce->isChecked());
     Config::settings().setValue("nativeFrame", native->isChecked());
     Config::settings().setValue("effects", fx->isChecked());
+    Config::settings().setValue("tempKeepDays", keep->value());
     UiSounds::instance().setEnabled(snd->isChecked());
     applyEffects();
     Config::settings().setValue("theme", theme->currentText());
