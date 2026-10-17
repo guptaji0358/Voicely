@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "ProtocolClient.h"
 #include "ui/Buttons.h"
+#include "MemoryTrim.h"
 #include "ui/AudioDragHandle.h"
 #include "ui/Card.h"
 #include "ui/CursorPolicy.h"
@@ -179,6 +180,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
     connect(m_levelOut, &QAudioBufferOutput::audioBufferReceived, this, &MainWindow::onAudioBuffer);
     m_waveTimer.setInterval(33);
     connect(&m_waveTimer, &QTimer::timeout, this, &MainWindow::tickWave);
+    m_trimTimer.setSingleShot(true);                 // idle or minimised: unused pages go back to Windows (no data is lost)
+    connect(&m_trimTimer, &QTimer::timeout, this, [this] {
+        if (m_player->playbackState() == QMediaPlayer::PlayingState || m_previewPlayer->playbackState() == QMediaPlayer::PlayingState)
+            m_trimTimer.start(30000);                // still playing: try again later
+        else
+            MemoryTrim::now();
+    });
 
     connect(m_previewPlayer, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState st) {
         if (st == QMediaPlayer::PlayingState) setStatus("Playing voice preview.");   // only once playback really started
@@ -725,6 +733,7 @@ void MainWindow::changeEvent(QEvent *e) {
     if (e->type() == QEvent::WindowStateChange && m_shell) {
         m_shell->setMaximizedLook(isMaximized() || isFullScreen());
         m_titleBar->syncWindowState();
+        if (isMinimized()) m_trimTimer.start(800);
     }
 }
 
@@ -832,6 +841,8 @@ void MainWindow::setState(State s) {
     updatePreviewUi();
     updateGlActivity();
     prepareTempAudio();
+    if (s == State::Idle || s == State::Unavailable) m_trimTimer.start(20000);   // quiet for 20 s -> trim memory
+    else m_trimTimer.stop();
 }
 
 void MainWindow::updateAudioPanel() {

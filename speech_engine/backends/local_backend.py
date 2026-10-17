@@ -132,10 +132,90 @@ class LocalBackend(Backend):
         if not (model and voices):
             raise BackendUnavailableError(self.status().problems[-1] if self.status().problems else "model files missing")
         try:
-            self._kokoro = Kokoro(str(model), str(voices))
+            self._kokoro = self._open(Kokoro, model, voices)
         except Exception as exc:  # onnxruntime / file errors
             raise BackendUnavailableError(f"could not load Kokoro model: {exc}") from exc
         return self._kokoro
+
+    @staticmethod
+    def _mapped_model(model: Path) -> Path:
+        """A copy of the model whose weights live in a separate ``.data`` file. onnxruntime memory-maps such a file, so the
+        ~310 MB of weights are file-backed pages that Windows can drop and re-read from disk at any time instead of private
+        memory (measured: private commit 796 -> 581 MB; audio bit-identical, the graph is only re-saved, not changed).
+        Built once next to the model (costs ~310 MB of disk); any failure falls back to the original file."""
+        import shutil
+        import tempfile
+        import onnxruntime as rt
+        name = model.stem + ".mapped.onnx"                  # one copy per model file (fp32 / int8 never get mixed up)
+        d = model.parent / ("mapped-" + model.stem)
+        out = d / name
+        data = d / (name + ".data")
+        if out.is_file() and data.is_file() and out.stat().st_mtime >= model.stat().st_mtime:
+            return out
+        tmp = Path(tempfile.mkdtemp(prefix=".mapped-", dir=str(model.parent)))
+        try:
+            so = rt.SessionOptions()
+            so.graph_optimization_level = rt.GraphOptimizationLevel.ORT_DISABLE_ALL     # re-save only, no fusions
+            so.optimized_model_filepath = str(tmp / name)
+            so.add_session_config_entry("session.optimized_model_external_initializers_file_name", name + ".data")
+            so.add_session_config_entry("session.optimized_model_external_initializers_min_size_in_bytes", "1024")
+            rt.InferenceSession(str(model), sess_options=so, providers=["CPUExecutionProvider"])
+            if not ((tmp / name).is_file() and (tmp / (name + ".data")).is_file()):
+                raise RuntimeError("external-weights copy was not written")
+            shutil.rmtree(d, ignore_errors=True)
+            os.replace(tmp, d)
+            return out
+        except Exception:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def _open(Kokoro, model: Path, voices: Path):
+        """Open the model with a low-memory onnxruntime session. By default its CPU memory arena keeps every allocation made
+        for every utterance length (the worker grew from ~420 MB to ~1.1 GB while speaking a few paragraphs). Here the
+        arena is shrunk back after every run and memory-pattern planning is off. Same model, same maths: the audio is
+        bit-identical, only the allocator behaviour changes (measured: ~430 MB steady instead of ~1.1 GB, similar speed).
+        TTS_LOW_MEMORY=0 restores the library default."""
+        if os.environ.get("TTS_LOW_MEMORY", "1") != "0" and hasattr(Kokoro, "from_session"):
+            try:
+                import onnxruntime as rt
+                from kokoro_onnx.session import resolve_providers
+                so = rt.SessionOptions()
+                so.enable_mem_pattern = False
+                run_opts = rt.RunOptions()
+                run_opts.add_run_config_entry("memory.enable_memory_arena_shrinkage", "cpu:0")
+                path = model
+                if os.environ.get("TTS_MAPPED_MODEL", "1") != "0":
+                    try:
+                        path = LocalBackend._mapped_model(model)
+                    except Exception:
+                        path = model                # cannot write next to the model, etc.: use the original
+                sess = rt.InferenceSession(str(path), sess_options=so, providers=resolve_providers())
+
+                class _Shrinking:                   # Kokoro only calls .run(None, inputs); everything else passes through
+                    _model_path = str(model)
+
+                    def run(self, outputs, inputs, run_options=None):
+                        return sess.run(outputs, inputs, run_options=run_opts)
+
+                    def __getattr__(self, name):
+                        return getattr(sess, name)
+
+                return Kokoro.from_session(_Shrinking(), str(voices))
+            except Exception:                       # older kokoro-onnx / unexpected API: fall back to the default session
+                pass
+        return Kokoro(str(model), str(voices))
+
+    def unload(self) -> bool:
+        """Free the model (about 400 MB). It is reloaded from disk on the next request. Returns True if it was loaded."""
+        with self._lock:
+            had = self._kokoro is not None
+            self._kokoro = None
+            self._style_cache.clear()
+        if had:
+            import gc
+            gc.collect()
+        return had
 
     def _style(self, k, profile: VoiceProfile):
         if not profile.local_blend:

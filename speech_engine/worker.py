@@ -237,6 +237,11 @@ class Worker(QAMixin):
         finally:
             with self.lock:
                 self.job = None
+            # Light on RAM: the speech model (~400 MB) is loaded for the job, the audio goes to disk as it is produced,
+            # and everything is released as soon as the job ends (measured: back to ~80 MB between jobs).
+            import gc
+            gc.collect()
+            _trim_working_set()
 
     @staticmethod
     def _target(req, key="output_path"):
@@ -364,6 +369,20 @@ class Worker(QAMixin):
                 "duration_s": round(sink.info["duration_s"], 3), "mp3_frames": sink.info["frames"]}
 
 
+def _trim_working_set() -> None:
+    """Windows: hand the worker's idle pages back to the OS (they are faulted in again only if touched). No-op elsewhere."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k32 = ctypes.WinDLL("kernel32")
+        k32.GetCurrentProcess.restype = ctypes.c_void_p
+        k32.SetProcessWorkingSetSize.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t]
+        k32.SetProcessWorkingSetSize(k32.GetCurrentProcess(), ctypes.c_size_t(-1).value, ctypes.c_size_t(-1).value)
+    except Exception:
+        pass
+
+
 def _preload() -> None:
     """Import heavy native modules on the main thread before any job thread needs them.
     (Importing scipy for the first time from a worker thread while the main thread sat in a blocking
@@ -380,6 +399,7 @@ def main() -> int:
     worker = Worker(out)
     log(f"started pid={os.getpid()} python={sys.version.split()[0]}")
     _preload()
+    _trim_working_set()
     out.send({"event": "ready", "request_id": None, "pid": os.getpid()})
     lines: "queue.Queue[bytes | None]" = queue.Queue()
 

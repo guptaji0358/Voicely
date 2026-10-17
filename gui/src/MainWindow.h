@@ -197,6 +197,7 @@ private:
     QAudioOutput *m_audioOut, *m_previewOut;
     QAudioBufferOutput *m_levelOut;
     QTimer m_waveTimer;
+    QTimer m_trimTimer;                      // idle / minimised: give unused pages back to Windows (MemoryTrim.h)
     QList<QPair<qint64, float>> m_levels;   // (media time in us, level 0..1) decoded ahead of playback
     qint64 m_levelCursor = 0;
     bool m_seeking = false;

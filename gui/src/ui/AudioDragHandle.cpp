@@ -124,13 +124,14 @@ void AudioDragHandle::mouseMoveEvent(QMouseEvent *e) {
     if (file.isEmpty() || !QFileInfo::exists(file)) return;
     m_dragging = true;
     auto *mime = new QMimeData;
+    // Only the file URL (CF_HDROP on Windows), exactly like Explorer: an extra text/plain flavour makes some editors treat
+    // the drop as text and refuse it. All three actions are offered because editors differ in which one they accept.
     mime->setUrls({QUrl::fromLocalFile(file)});
-    mime->setText(QFileInfo(file).fileName());
     auto *drag = new QDrag(this);
     drag->setMimeData(mime);
     drag->setPixmap(dragPixmap(file));
     drag->setHotSpot(QPoint(20, 16));
-    const Qt::DropAction act = drag->exec(Qt::CopyAction | Qt::LinkAction, Qt::CopyAction);
+    const Qt::DropAction act = drag->exec(Qt::CopyAction | Qt::MoveAction | Qt::LinkAction, Qt::CopyAction);
     m_down = false;
     setCursor(Qt::OpenHandCursor);
     emit dragged(file, act != Qt::IgnoreAction);
