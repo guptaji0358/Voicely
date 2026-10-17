@@ -37,14 +37,14 @@ QLabel#statusDot[state="error"] { color: @danger; }
 QLabel#emptyTitle { color: @text-muted; font-weight: 600; }
 
 /* ---- inputs */
-QPlainTextEdit, QLineEdit, QDoubleSpinBox, QComboBox {
+QPlainTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
     background: @surface-raised; border: 1px solid @border; border-radius: @radius;
     padding: @pad-v 8px; selection-background-color: @selection; selection-color: @text;
 }
-QLineEdit, QDoubleSpinBox, QComboBox { min-height: 20px; }
-QPlainTextEdit:hover, QLineEdit:hover, QDoubleSpinBox:hover, QComboBox:hover { border-color: @border-strong; }
-QPlainTextEdit:focus, QLineEdit:focus, QDoubleSpinBox:focus, QComboBox:focus { border-color: @accent; }
-QPlainTextEdit:disabled, QLineEdit:disabled, QDoubleSpinBox:disabled, QComboBox:disabled {
+QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox { min-height: 20px; }
+QPlainTextEdit:hover, QLineEdit:hover, QDoubleSpinBox:hover, QSpinBox:hover, QComboBox:hover { border-color: @border-strong; }
+QPlainTextEdit:focus, QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus { border-color: @accent; }
+QPlainTextEdit:disabled, QLineEdit:disabled, QDoubleSpinBox:disabled, QSpinBox:disabled, QComboBox:disabled {
     color: @text-disabled; background: @surface; border-color: @border;
 }
 QPlainTextEdit#textEditor { font-size: @font-size-editor; padding: 10px 12px; }
@@ -55,7 +55,7 @@ QComboBox QAbstractItemView {
     background: @surface-raised; border: 1px solid @border-strong; outline: none;
     selection-background-color: @selection; selection-color: @text;
 }
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0; border: none; }
+QDoubleSpinBox::up-button, QSpinBox::up-button, QDoubleSpinBox::down-button, QSpinBox::down-button { width: 0; border: none; }
 
 /* ---- buttons */
 QPushButton {

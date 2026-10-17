@@ -5,6 +5,7 @@
 #include <QList>
 #include <QMainWindow>
 #include <QPair>
+#include <QPointer>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -19,6 +20,7 @@ class EmptyState;
 class ShellWidget;
 class TitleBar;
 class QaPanel;
+class ModelLabDialog;
 class Card;
 class AnimatedButton;
 class QAudioBufferOutput;
@@ -61,6 +63,7 @@ public slots:
     void acceptRepair();
     void discardRepair();
     void openDictionary();
+    void openModelLab();
 
 protected:
     void closeEvent(QCloseEvent *e) override;
@@ -160,4 +163,5 @@ private:
     qint64 m_levelCursor = 0;
     bool m_seeking = false;
     QList<QAction *> m_actions;
+    QPointer<ModelLabDialog> m_lab;
 };

@@ -12,6 +12,7 @@
 #include "ui/PronSettings.h"
 #include "ui/QaPanel.h"
 #include "ui/ReviewDialog.h"
+#include "ui/ModelLabDialog.h"
 #include "ui/ThemeManager.h"
 
 #include <QAction>
@@ -209,6 +210,7 @@ void MainWindow::buildActions() {
     mk("Generate speech", "generate", QKeySequence("Ctrl+Return"), [this] { onGenerateClicked(); });
     mk("Recheck speech", "recheck", QKeySequence("Ctrl+R"), [this] { recheckSpeech(); });
     mk("Pronunciation dictionary…", "dictionary", QKeySequence("Ctrl+D"), [this] { openDictionary(); });
+    mk("Model Lab…", "ai", QKeySequence("Ctrl+M"), [this] { openModelLab(); });
     mk("Save as MP3…", "save-mp3", QKeySequence::Save, [this] { saveMp3(); });
     mk("Settings…", "settings", QKeySequence("Ctrl+,"), [this] { openSettings(); });
     mk("Re-check backend", "recheck", QKeySequence(), [this] { startWorker(); });
@@ -1260,6 +1262,17 @@ void MainWindow::onSaveFeedback(const QJsonObject &attempt) {
 void MainWindow::openDictionary() {
     DictionaryDialog d(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa(), this);
     d.exec();
+}
+
+// Optional: the Model Lab runs in its own worker process and window; closing it never affects speech generation.
+void MainWindow::openModelLab() {
+    if (!m_lab) {
+        m_lab = new ModelLabDialog({}, this);
+        m_lab->setAttribute(Qt::WA_DeleteOnClose);
+    }
+    m_lab->show();
+    m_lab->raise();
+    m_lab->activateWindow();
 }
 
 // ---------------------------------------------------------------- playback levels (real data)

@@ -170,3 +170,6 @@ Creates `dist/TTSStudio/` (TTSStudio.exe + Qt via windeployqt, `engine/`, and a 
 kokoro-onnx, lameenc, numpy, scipy). PyTorch, sounddevice, pytest and models are not included; Kokoro and the ASR model are fetched on request.
 `--verify` runs `packaging/verify_dist.py` in a clean environment (no system Python/Qt on PATH): runtime imports, worker protocol 2 actions, real local
 synthesis if the Kokoro model exists, MP3 export, and a real launch of the exe. Not done: an installer (Inno Setup/NSIS/WiX) and code signing.
+
+## Model Lab (optional)
+A from-scratch, growable Transformer with training, evaluation, expansion and a Qt control panel (Tools > Model Lab, Ctrl+M). It is optional, needs PyTorch, runs in its own worker process, and the speech app never depends on it. See `docs/MODEL_LAB.md` for what it does, the real results and the limitations.

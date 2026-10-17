@@ -19,9 +19,10 @@ public:
     explicit ProtocolClient(QObject *parent = nullptr);
     ~ProtocolClient() override;
 
-    // Launches `<python> -X utf8 -m speech_engine.worker` with cwd = engineRoot.
+    // Launches `<python> -X utf8 -m <module>` with cwd = engineRoot (default module: the speech worker;
+    // the Model Lab uses "model_lab.worker" in a separate process).
     void start(const QString &pythonExe, const QString &engineRoot,
-               const QProcessEnvironment &extraEnv = {});
+               const QProcessEnvironment &extraEnv = {}, const QString &module = QStringLiteral("speech_engine.worker"));
     void stop();                       // graceful: closes stdin, kills after a short grace period
     bool isRunning() const { return m_proc.state() == QProcess::Running; }
     bool isReady() const { return m_ready; }
@@ -38,6 +39,8 @@ public:
 signals:
     void ready();                                               // worker sent its "ready" event
     void progress(const QString &id, int percent, const QString &message);
+    // Any other event for a pending request (e.g. "metric" from the Model Lab worker): the full message object.
+    void eventReceived(const QString &id, const QString &name, const QJsonObject &message);
     // status: "success" | "error" | "cancelled". For error: code + message in `response`.
     void finished(const QString &id, const QString &status, const QJsonObject &response);
     void workerStopped(const QString &reason);                  // process failed to start or ended

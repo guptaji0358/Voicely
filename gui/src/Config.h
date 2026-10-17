@@ -45,4 +45,13 @@ inline QString findPython() {
     return QStandardPaths::findExecutable("python");
 }
 
+// Interpreter for the optional Model Lab worker (needs PyTorch): Settings > TTS_LAB_PYTHON > the speech interpreter.
+inline QString findLabPython() {
+    const QString cfg = settings().value("labPythonExe").toString();
+    if (!cfg.isEmpty()) return cfg;
+    const QString env = qEnvironmentVariable("TTS_LAB_PYTHON");
+    if (!env.isEmpty()) return env;
+    return findPython();
+}
+
 }  // namespace Config

@@ -13,6 +13,9 @@ Nothing is downloaded here, so the build is reproducible offline. Large optional
 Options:
   --with-google    include google-genai (cloud TTS backend and the optional Gemini LLM provider)
   --with-asr       include faster-whisper and its dependencies IF they are installed in this Python (needed for Recheck Speech)
+  --with-lab       include the optional Model Lab package (model_lab/, ~150 KB of Python; no datasets, no checkpoints)
+  --with-torch     with --with-lab: also bundle PyTorch (CPU build, several hundred MB). Without it Model Lab asks for a
+                   Python that has PyTorch (Settings) and the speech application is completely unaffected.
   --no-scipy       leave scipy out (~130 MB smaller; MP3 resampling falls back to linear interpolation)
   --verify         run packaging/verify_dist.py on the result
 
@@ -101,6 +104,8 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "dist" / "TTSStudio"))
     ap.add_argument("--with-google", action="store_true")
     ap.add_argument("--with-asr", action="store_true")
+    ap.add_argument("--with-lab", action="store_true")
+    ap.add_argument("--with-torch", action="store_true")
     ap.add_argument("--no-scipy", action="store_true")
     ap.add_argument("--verify", action="store_true")
     a = ap.parse_args()
@@ -126,14 +131,22 @@ def main() -> int:
     shutil.copytree(ROOT / "speech_engine", out / "engine" / "speech_engine",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
+    if a.with_lab:
+        try:
+            shutil.copytree(ROOT / "model_lab", out / "engine" / "model_lab", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            print("    + model_lab (optional Model Lab package)")
+        except Exception as exc:                      # an optional feature must never stop the base build
+            print(f"    ! Model Lab packaging failed ({exc}); continuing without it", file=sys.stderr)
+            a.with_lab = a.with_torch = False
+
     print("3/4 python runtime")
     py = out / "python"
     copy_runtime(py)
     roots = list(RUNTIME_PKGS) + ([] if a.no_scipy else ["scipy"]) + (["google-genai"] if a.with_google else []) \
-        + (["faster-whisper"] if a.with_asr else [])
+        + (["faster-whisper"] if a.with_asr else []) + (["torch"] if (a.with_lab and a.with_torch) else [])
     pk = closure(roots)
-    for k in ("torch", "torchvision", "sounddevice", "pytest", "miniaudio", "pyinstaller"):
-        pk.pop(k, None)                                           # never part of the runtime
+    for k in ("torchvision", "sounddevice", "pytest", "miniaudio", "pyinstaller") + (() if (a.with_lab and a.with_torch) else ("torch",)):
+        pk.pop(k, None)                                           # never part of the runtime unless explicitly requested
     site = py / "Lib" / "site-packages"
     total = 0
     for name, d in sorted(pk.items()):
@@ -148,7 +161,10 @@ def main() -> int:
         "Run TTSStudio.exe. It uses ./python and ./engine automatically.\n"
         "First run: Kokoro model files are downloaded on request (about 310 MB, or ~80 MB int8) to %LOCALAPPDATA%\\speech_engine\\models.\n"
         "Recheck Speech needs the faster-whisper package in ./python and a recognition model (Settings > Pronunciation > Download).\n"
-        "Nothing is uploaded; AI suggestions are off until you enable them.\n", encoding="utf-8")
+        "Nothing is uploaded; AI suggestions are off until you enable them.\n"
+        + (("Model Lab (optional): engine/model_lab is included"
+            + (" with PyTorch.\n" if a.with_torch else "; it needs a Python with PyTorch (Settings) - the speech app does not.\n"))
+           if a.with_lab else "Model Lab is not included in this build.\n"), encoding="utf-8")
     size = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
     print(f"done: {out}  ({size / 1e6:.0f} MB)")
 

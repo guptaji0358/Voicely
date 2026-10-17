@@ -12,7 +12,7 @@ find_package(Python3 COMPONENTS Interpreter)   # only used to run the tests
 add_library(ttscore STATIC
   src/ProtocolClient.cpp src/MainWindow.cpp
   src/ui/Motion.cpp src/ui/ThemeManager.cpp src/ui/Icons.cpp src/ui/Buttons.cpp src/ui/Indicators.cpp
-  src/ui/Card.cpp src/ui/Frameless.cpp src/ui/QaPanel.cpp src/ui/DictionaryDialog.cpp src/ui/ReviewDialog.cpp src/ui/PronSettings.cpp
+  src/ui/Card.cpp src/ui/Frameless.cpp src/ui/QaPanel.cpp src/ui/DictionaryDialog.cpp src/ui/ReviewDialog.cpp src/ui/PronSettings.cpp src/ui/ModelLabDialog.cpp
   resources/resources.qrc)   # QSS themes + SVG icons, addressed as :/styles/*, :/icons/*, :/illustrations/*
 target_include_directories(ttscore PUBLIC src)
 target_link_libraries(ttscore PUBLIC Qt6::Widgets Qt6::Multimedia Qt6::Svg)
@@ -29,7 +29,7 @@ get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
 get_filename_component(_qtbin "${_qmake}" DIRECTORY)
 get_filename_component(_qtplugins "${_qtbin}/../plugins" ABSOLUTE)     # lets the offscreen platform plugin be found by the tests
 set(TTS_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Folder containing speech_engine/")
-foreach(t tst_protocol tst_gui tst_ui tst_qa_gui)
+foreach(t tst_protocol tst_gui tst_ui tst_qa_gui tst_model_lab)
   add_executable(${t} tests/${t}.cpp)
   target_link_libraries(${t} PRIVATE ttscore Qt6::Test)
   add_test(NAME ${t} COMMAND ${t})

@@ -44,8 +44,25 @@ def main(dist: Path) -> int:
                         "import numpy, onnxruntime, kokoro_onnx, lameenc, phonemizer, espeakng_loader, sys;"
                         "print('ok', sys.prefix)"], capture_output=True, text=True, env=clean_env(), cwd=work)
     check("bundled python imports runtime dependencies", r.returncode == 0 and "ok" in r.stdout, r.stderr[-300:])
+    has_lab = (engine / "model_lab" / "worker.py").is_file()
+    has_torch = (dist / "python" / "Lib" / "site-packages" / "torch").is_dir()
     r = subprocess.run([str(py), "-I", "-c", "import torch"], capture_output=True, text=True, env=clean_env(), cwd=work)
-    check("PyTorch is not bundled", r.returncode != 0)
+    check("PyTorch is bundled only when Model Lab was built with --with-torch", (r.returncode == 0) == (has_lab and has_torch),
+          r.stderr[-200:])
+    if has_lab:                       # optional Model Lab: its worker must start and describe its own state honestly
+        lab_root = work / "lab"
+        lab_env = clean_env({"PYTHONPATH": str(engine), "MODEL_LAB_DIR": str(lab_root), "SPEECH_ENGINE_DATA_DIR": str(data)})
+        lp = subprocess.Popen([str(py), "-X", "utf8", "-m", "model_lab.worker"], cwd=work, env=lab_env, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready = json.loads(lp.stdout.readline())
+        lp.stdin.write(json.dumps(dict(protocol_version=2, request_id="h", action="health")).encode() + b"\n")
+        lp.stdin.flush()
+        h = json.loads(lp.stdout.readline())
+        lp.stdin.close()
+        lp.wait(20)
+        check("Model Lab worker starts from the bundled runtime", ready.get("worker") == "model_lab" and h.get("status") == "success", str(h)[:300])
+        check("Model Lab reports PyTorch availability truthfully", h.get("torch_available") == has_torch,
+              f"torch_available={h.get('torch_available')} bundled={has_torch}")
     r = subprocess.run([str(py), "-c", "import sys; print(sys.prefix)"], capture_output=True, text=True, env=clean_env(), cwd=work)
     check("python runs from inside the dist folder (not the system install)", str(dist).lower() in r.stdout.lower(), r.stdout)
 

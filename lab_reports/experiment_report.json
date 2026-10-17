@@ -1,0 +1,631 @@
+{
+  "hardware": {
+    "cpu_count": 12,
+    "ram_total": 16857817088,
+    "ram_available": 1843486720,
+    "torch": "2.13.0+cpu",
+    "cuda": false,
+    "cuda_device": null,
+    "torch_threads": 8
+  },
+  "dataset": {
+    "version": "v0001-fa4f3045",
+    "counts": {
+      "train": 2800,
+      "val": 356,
+      "test": 341,
+      "regression": 434
+    },
+    "provenance": "SYNTHETIC: labels correct by construction from model_lab/synth.py templates; regression split uses trigger words that never appear in train/val/test. Not user data.",
+    "label_distribution": {
+      "train": {
+        "plain": 389,
+        "number": 397,
+        "date": 400,
+        "unit": 419,
+        "abbreviation": 409,
+        "acronym": 392,
+        "heteronym": 394
+      },
+      "val": {
+        "plain": 59,
+        "number": 53,
+        "date": 56,
+        "unit": 38,
+        "abbreviation": 46,
+        "acronym": 54,
+        "heteronym": 50
+      },
+      "test": {
+        "plain": 52,
+        "number": 50,
+        "date": 44,
+        "unit": 43,
+        "abbreviation": 45,
+        "acronym": 52,
+        "heteronym": 55
+      },
+      "regression": {
+        "plain": 62,
+        "number": 62,
+        "date": 62,
+        "unit": 62,
+        "abbreviation": 62,
+        "acronym": 62,
+        "heteronym": 62
+      }
+    },
+    "cleaning": {
+      "input": 3500,
+      "invalid": 0,
+      "duplicates": 3,
+      "contradictions": 0,
+      "kept": 3497
+    }
+  },
+  "runs": {
+    "1K": {
+      "init": {
+        "params": 928,
+        "config": {
+          "vocab_size": 73,
+          "n_layer": 1,
+          "d_model": 4,
+          "n_head": 1,
+          "head_dim": 4,
+          "d_ff": 16,
+          "max_seq": 96,
+          "precision": "fp32",
+          "dropout": 0.0
+        },
+        "seed": 11,
+        "state": "random_init"
+      },
+      "random_init_eval": {
+        "val": {
+          "accuracy": 0.0,
+          "loss": 4.2912038167317705
+        },
+        "regression": {
+          "accuracy": 0.0,
+          "loss": 4.292905725704867
+        }
+      },
+      "train": {
+        "status": "completed",
+        "steps_done": 1500,
+        "final_train_loss": 1.3533171176910401,
+        "best_val_loss": 1.3370557126745712,
+        "elapsed_s": 12.850823879241943,
+        "peak_rss_bytes": 306860032,
+        "estimated_peak_bytes": 328269107,
+        "device": "cpu",
+        "gradient_check": {
+          "grad_norm": 0.4735521376132965,
+          "max_weight_change": 3.0040740966796875e-05,
+          "tensors_with_gradient": 16,
+          "tensors_total": 16,
+          "loss": 4.292754650115967
+        }
+      },
+      "eval": {
+        "train": {
+          "accuracy": 0.011666666666666667,
+          "macro_f1": 0.024390243902439022,
+          "loss": 1.3367459130921209,
+          "perplexity": 3.806636204061763,
+          "majority_rate": 0.17833333333333334,
+          "baseline_accuracy": 0.8616666666666667
+        },
+        "val": {
+          "accuracy": 0.0028089887640449437,
+          "macro_f1": 0.004926108374384236,
+          "loss": 1.3370557126745712,
+          "perplexity": 3.807815681059629,
+          "majority_rate": 0.16573033707865167,
+          "baseline_accuracy": 0.8848314606741573
+        },
+        "test": {
+          "accuracy": 0.005865102639296188,
+          "macro_f1": 0.011661807580174929,
+          "loss": 1.3386272879885763,
+          "perplexity": 3.8138046550134197,
+          "majority_rate": 0.16129032258064516,
+          "baseline_accuracy": 0.8768328445747801
+        },
+        "regression": {
+          "accuracy": 0.009216589861751152,
+          "macro_f1": 0.016563146997929608,
+          "loss": 1.3586513378002025,
+          "perplexity": 3.890942194946568,
+          "majority_rate": 0.14285714285714285,
+          "baseline_accuracy": 0.6682027649769585
+        }
+      },
+      "verdict": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "finite_loss",
+            "ok": true,
+            "detail": "val loss 1.3371, regression loss 1.3587"
+          },
+          {
+            "name": "beats_majority_class",
+            "ok": false,
+            "detail": "val accuracy 0.003 vs majority-class 0.166 (+0.10 required)"
+          },
+          {
+            "name": "no_overfitting",
+            "ok": true,
+            "detail": "train 0.012 - val 0.003 = 0.009 (max 0.15)"
+          },
+          {
+            "name": "vs_rule_baseline_(info)",
+            "ok": true,
+            "detail": "val accuracy 0.003 vs rule baseline 0.885"
+          }
+        ]
+      },
+      "state": "eval_failed"
+    },
+    "10K": {
+      "init": {
+        "params": 10143,
+        "config": {
+          "vocab_size": 73,
+          "n_layer": 2,
+          "d_model": 17,
+          "n_head": 4,
+          "head_dim": 4,
+          "d_ff": 68,
+          "max_seq": 96,
+          "precision": "fp32",
+          "dropout": 0.0
+        },
+        "seed": 11,
+        "state": "random_init"
+      },
+      "random_init_eval": {
+        "val": {
+          "accuracy": 0.0,
+          "loss": 4.287714423862755
+        },
+        "regression": {
+          "accuracy": 0.0,
+          "loss": 4.28672274921607
+        }
+      },
+      "train": {
+        "status": "completed",
+        "steps_done": 1500,
+        "final_train_loss": 0.03480511726811528,
+        "best_val_loss": 0.058568183651364306,
+        "elapsed_s": 40.54675531387329,
+        "peak_rss_bytes": 328011776,
+        "estimated_peak_bytes": 352316707,
+        "device": "cpu",
+        "gradient_check": {
+          "grad_norm": 1.9703936576843262,
+          "max_weight_change": 3.0040740966796875e-05,
+          "tensors_with_gradient": 28,
+          "tensors_total": 28,
+          "loss": 4.284448623657227
+        }
+      },
+      "eval": {
+        "train": {
+          "accuracy": 0.8466666666666667,
+          "macro_f1": 0.8650674098301083,
+          "loss": 0.04077297426467709,
+          "perplexity": 1.041615605151974,
+          "majority_rate": 0.17833333333333334,
+          "baseline_accuracy": 0.8616666666666667
+        },
+        "val": {
+          "accuracy": 0.7921348314606742,
+          "macro_f1": 0.7887588968442895,
+          "loss": 0.06248066066640668,
+          "perplexity": 1.0644738725034746,
+          "majority_rate": 0.16573033707865167,
+          "baseline_accuracy": 0.8848314606741573
+        },
+        "test": {
+          "accuracy": 0.7976539589442815,
+          "macro_f1": 0.8056952942143362,
+          "loss": 0.08033499256721796,
+          "perplexity": 1.0836500215808291,
+          "majority_rate": 0.16129032258064516,
+          "baseline_accuracy": 0.8768328445747801
+        },
+        "regression": {
+          "accuracy": 0.6451612903225806,
+          "macro_f1": 0.6495674135692369,
+          "loss": 0.14551798502604166,
+          "perplexity": 1.1566385365693275,
+          "majority_rate": 0.14285714285714285,
+          "baseline_accuracy": 0.6682027649769585
+        }
+      },
+      "verdict": {
+        "passed": true,
+        "checks": [
+          {
+            "name": "finite_loss",
+            "ok": true,
+            "detail": "val loss 0.0625, regression loss 0.1455"
+          },
+          {
+            "name": "beats_majority_class",
+            "ok": true,
+            "detail": "val accuracy 0.792 vs majority-class 0.166 (+0.10 required)"
+          },
+          {
+            "name": "no_overfitting",
+            "ok": true,
+            "detail": "train 0.847 - val 0.792 = 0.055 (max 0.15)"
+          },
+          {
+            "name": "vs_rule_baseline_(info)",
+            "ok": true,
+            "detail": "val accuracy 0.792 vs rule baseline 0.885"
+          }
+        ]
+      },
+      "state": "eval_passed"
+    },
+    "100K": {
+      "init": {
+        "params": 99282,
+        "config": {
+          "vocab_size": 73,
+          "n_layer": 3,
+          "d_model": 50,
+          "n_head": 3,
+          "head_dim": 16,
+          "d_ff": 200,
+          "max_seq": 96,
+          "precision": "fp32",
+          "dropout": 0.0
+        },
+        "seed": 11,
+        "state": "random_init"
+      },
+      "random_init_eval": {
+        "val": {
+          "accuracy": 0.0,
+          "loss": 4.326203745307652
+        },
+        "regression": {
+          "accuracy": 0.0,
+          "loss": 4.318316032710656
+        }
+      },
+      "train": {
+        "status": "completed",
+        "steps_done": 1500,
+        "final_train_loss": 0.020270044077187778,
+        "best_val_loss": 0.05400514180681347,
+        "elapsed_s": 66.78473258018494,
+        "peak_rss_bytes": 365936640,
+        "estimated_peak_bytes": 384204883,
+        "device": "cpu",
+        "gradient_check": {
+          "grad_norm": 3.1810779571533203,
+          "max_weight_change": 3.0040740966796875e-05,
+          "tensors_with_gradient": 40,
+          "tensors_total": 40,
+          "loss": 4.312291622161865
+        }
+      },
+      "eval": {
+        "train": {
+          "accuracy": 0.9083333333333333,
+          "macro_f1": 0.9209254866395554,
+          "loss": 0.02652529615448114,
+          "perplexity": 1.026880223053893,
+          "majority_rate": 0.17833333333333334,
+          "baseline_accuracy": 0.8616666666666667
+        },
+        "val": {
+          "accuracy": 0.8258426966292135,
+          "macro_f1": 0.823521942880925,
+          "loss": 0.06961936444307851,
+          "perplexity": 1.0721000241898155,
+          "majority_rate": 0.16573033707865167,
+          "baseline_accuracy": 0.8848314606741573
+        },
+        "test": {
+          "accuracy": 0.8005865102639296,
+          "macro_f1": 0.8071624800216582,
+          "loss": 0.08772014058968812,
+          "perplexity": 1.091682561635269,
+          "majority_rate": 0.16129032258064516,
+          "baseline_accuracy": 0.8768328445747801
+        },
+        "regression": {
+          "accuracy": 0.6589861751152074,
+          "macro_f1": 0.6615518533357081,
+          "loss": 0.20994198251083904,
+          "perplexity": 1.2336064871295296,
+          "majority_rate": 0.14285714285714285,
+          "baseline_accuracy": 0.6682027649769585
+        }
+      },
+      "verdict": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "finite_loss",
+            "ok": true,
+            "detail": "val loss 0.0696, regression loss 0.2099"
+          },
+          {
+            "name": "beats_majority_class",
+            "ok": true,
+            "detail": "val accuracy 0.826 vs majority-class 0.166 (+0.10 required)"
+          },
+          {
+            "name": "no_overfitting",
+            "ok": true,
+            "detail": "train 0.908 - val 0.826 = 0.082 (max 0.15)"
+          },
+          {
+            "name": "vs_rule_baseline_(info)",
+            "ok": true,
+            "detail": "val accuracy 0.826 vs rule baseline 0.885"
+          },
+          {
+            "name": "val_accuracy_not_worse_than_best",
+            "ok": true,
+            "detail": "0.826 vs best 0.792"
+          },
+          {
+            "name": "val_loss_not_worse_than_best",
+            "ok": false,
+            "detail": "0.0696 vs best 0.0625"
+          },
+          {
+            "name": "no_regression_on_heldout",
+            "ok": true,
+            "detail": "regression accuracy 0.659 vs best 0.645"
+          }
+        ]
+      },
+      "state": "eval_failed"
+    },
+    "1M": {
+      "init": {
+        "params": 1001891,
+        "config": {
+          "vocab_size": 73,
+          "n_layer": 4,
+          "d_model": 145,
+          "n_head": 2,
+          "head_dim": 64,
+          "d_ff": 580,
+          "max_seq": 96,
+          "precision": "fp32",
+          "dropout": 0.0
+        },
+        "seed": 11,
+        "state": "random_init"
+      },
+      "random_init_eval": {
+        "val": {
+          "accuracy": 0.0,
+          "loss": 4.341367410429826
+        },
+        "regression": {
+          "accuracy": 0.0,
+          "loss": 4.334881581327723
+        }
+      },
+      "train": {
+        "status": "completed",
+        "steps_done": 1500,
+        "final_train_loss": 0.015861373057123273,
+        "best_val_loss": 0.05980787727333452,
+        "elapsed_s": 499.54094529151917,
+        "peak_rss_bytes": 515612672,
+        "estimated_peak_bytes": 497134947,
+        "device": "cpu",
+        "gradient_check": {
+          "grad_norm": 8.231435775756836,
+          "max_weight_change": 1.5020370483398438e-05,
+          "tensors_with_gradient": 52,
+          "tensors_total": 52,
+          "loss": 4.327856540679932
+        }
+      },
+      "eval": {
+        "train": {
+          "accuracy": 0.93,
+          "macro_f1": 0.9398614217043268,
+          "loss": 0.021138729048761552,
+          "perplexity": 1.0213637346288726,
+          "majority_rate": 0.17833333333333334,
+          "baseline_accuracy": 0.8616666666666667
+        },
+        "val": {
+          "accuracy": 0.8258426966292135,
+          "macro_f1": 0.8266163181901897,
+          "loss": 0.0842642404336845,
+          "perplexity": 1.0879163273135184,
+          "majority_rate": 0.16573033707865167,
+          "baseline_accuracy": 0.8848314606741573
+        },
+        "test": {
+          "accuracy": 0.7859237536656891,
+          "macro_f1": 0.8003916489837575,
+          "loss": 0.09542421271793793,
+          "perplexity": 1.100125443357174,
+          "majority_rate": 0.16129032258064516,
+          "baseline_accuracy": 0.8768328445747801
+        },
+        "regression": {
+          "accuracy": 0.6359447004608295,
+          "macro_f1": 0.6449115923748897,
+          "loss": 0.2903038170745011,
+          "perplexity": 1.3368335792007595,
+          "majority_rate": 0.14285714285714285,
+          "baseline_accuracy": 0.6682027649769585
+        }
+      },
+      "verdict": {
+        "passed": false,
+        "checks": [
+          {
+            "name": "finite_loss",
+            "ok": true,
+            "detail": "val loss 0.0843, regression loss 0.2903"
+          },
+          {
+            "name": "beats_majority_class",
+            "ok": true,
+            "detail": "val accuracy 0.826 vs majority-class 0.166 (+0.10 required)"
+          },
+          {
+            "name": "no_overfitting",
+            "ok": true,
+            "detail": "train 0.930 - val 0.826 = 0.104 (max 0.15)"
+          },
+          {
+            "name": "vs_rule_baseline_(info)",
+            "ok": true,
+            "detail": "val accuracy 0.826 vs rule baseline 0.885"
+          },
+          {
+            "name": "val_accuracy_not_worse_than_best",
+            "ok": true,
+            "detail": "0.826 vs best 0.792"
+          },
+          {
+            "name": "val_loss_not_worse_than_best",
+            "ok": false,
+            "detail": "0.0843 vs best 0.0625"
+          },
+          {
+            "name": "no_regression_on_heldout",
+            "ok": true,
+            "detail": "regression accuracy 0.636 vs best 0.645"
+          }
+        ]
+      },
+      "state": "eval_failed"
+    }
+  },
+  "started": 1792227323.7904456,
+  "expansion": {
+    "source": "100K",
+    "report": {
+      "old_params": 99282,
+      "new_params": 1001891,
+      "growth": {
+        "n_layer": [
+          3,
+          4
+        ],
+        "d_model": [
+          50,
+          145
+        ],
+        "n_head": [
+          3,
+          8
+        ],
+        "d_ff": [
+          200,
+          580
+        ]
+      },
+      "expected_function_preserving": false,
+      "tensor_actions": {
+        "expanded": 40,
+        "identity-initialised": 8,
+        "randomly": 4
+      },
+      "measured": {
+        "max_abs_logit_diff": 27.845027923583984,
+        "top1_agreement": 0.6171875,
+        "samples": 8,
+        "seq_len": 64
+      },
+      "optimizer": "not carried over (parameter shapes changed); training restarts the optimiser moments from zero"
+    },
+    "eval_before_training": {
+      "state": "eval_failed",
+      "val_accuracy": 0.04,
+      "checks": [
+        {
+          "name": "beats_majority_class",
+          "ok": false,
+          "detail": "val accuracy 0.040 vs majority-class 0.163 (+0.10 required)"
+        },
+        {
+          "name": "val_accuracy_not_worse_than_best",
+          "ok": false,
+          "detail": "0.040 vs best 0.792"
+        },
+        {
+          "name": "val_loss_not_worse_than_best",
+          "ok": false,
+          "detail": "5.0110 vs best 0.0625"
+        },
+        {
+          "name": "no_regression_on_heldout",
+          "ok": false,
+          "detail": "regression accuracy 0.010 vs best 0.645"
+        },
+        {
+          "name": "trained_after_expansion",
+          "ok": false,
+          "detail": "this expanded model has not been trained since expansion; it cannot be accepted yet"
+        }
+      ]
+    },
+    "after_training": {
+      "steps": 600,
+      "state": "eval_failed",
+      "peak_rss_bytes": 518713344,
+      "val_accuracy": 0.8258426966292135,
+      "regression_accuracy": 0.6728110599078341
+    }
+  },
+  "targets_only": {
+    "100M": {
+      "params": 99958144,
+      "estimated_training_bytes": 2604616499,
+      "decision": {
+        "verdict": "ok",
+        "reason": "needs ~2.43 GB; 3.76 GB free, 2.76 GB usable after the 1.00 GB safety margin",
+        "estimated": 2604616499,
+        "available": 4037705728,
+        "allowed": 2963963904
+      }
+    },
+    "1B": {
+      "params": 1000136080,
+      "estimated_training_bytes": 19361524787,
+      "decision": {
+        "verdict": "refuse",
+        "reason": "needs ~18.03 GB but only 3.76 GB is free; refusing to start (floor 0.40 GB)",
+        "estimated": 19361524787,
+        "available": 4037705728,
+        "allowed": 2963963904
+      }
+    },
+    "8B": {
+      "params": 7998541118,
+      "estimated_training_bytes": 138202776339,
+      "decision": {
+        "verdict": "refuse",
+        "reason": "needs ~128.71 GB but only 3.76 GB is free; refusing to start (floor 0.40 GB)",
+        "estimated": 138202776339,
+        "available": 4037705728,
+        "allowed": 2963963904
+      }
+    }
+  },
+  "finished": 1792228389.317399
+}

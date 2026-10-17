@@ -25,7 +25,7 @@ ProtocolClient::~ProtocolClient() {
 }
 
 void ProtocolClient::start(const QString &pythonExe, const QString &engineRoot,
-                           const QProcessEnvironment &extraEnv) {
+                           const QProcessEnvironment &extraEnv, const QString &module) {
     if (m_proc.state() != QProcess::NotRunning) return;
     m_ready = false;
     m_stopping = false;
@@ -41,7 +41,7 @@ void ProtocolClient::start(const QString &pythonExe, const QString &engineRoot,
     m_proc.setWorkingDirectory(engineRoot);
     // Program + argument list: no shell, no manual quoting; spaces / Unicode paths are safe.
     m_proc.setProgram(pythonExe);
-    m_proc.setArguments({"-X", "utf8", "-m", "speech_engine.worker"});
+    m_proc.setArguments({"-X", "utf8", "-m", module});
     m_proc.start();
 }
 
@@ -135,6 +135,8 @@ void ProtocolClient::handleLine(const QByteArray &line) {
         emit ready();
     } else if (event == "progress") {
         if (m_pending.contains(id)) emit progress(id, o.value("progress").toInt(), o.value("message").toString());
+    } else if (!event.isEmpty() && m_pending.contains(id)) {
+        emit eventReceived(id, event, o);
     } else if (o.contains("status")) {
         const QString st = o.value("status").toString();
         if (m_pending.contains(id)) complete(id, st, o);
