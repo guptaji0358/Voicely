@@ -75,14 +75,14 @@ def predict_labels(model, tok: Tokenizer, records: list[dict], labels: list[str]
 
 
 def evaluate_split(model, tok: Tokenizer, ts: TokenSet, records: list[dict], labels: list[str], label_only: bool = True,
-                   limit: int | None = None) -> dict:
+                   limit: int | None = None, task: str = "review_category") -> dict:
     recs = records[:limit] if limit else records
     out = eval_loss(model, ts, label_only, limit=len(recs))
     pred, gold = predict_labels(model, tok, recs, labels)
     out.update(_metrics(pred, gold, labels))
     out["invalid_outputs"] = sum(p not in labels for p in pred)
     out["majority_rate"] = majority_rate(gold)
-    bp = [baseline.predict(r["text"]) for r in recs]
+    bp = [baseline.predict_for(task, r["text"]) for r in recs]
     bm = _metrics(bp, gold, labels)
     out["baseline_accuracy"], out["baseline_macro_f1"] = bm["accuracy"], bm["macro_f1"]
     return out

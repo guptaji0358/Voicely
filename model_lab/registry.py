@@ -63,7 +63,7 @@ class Registry:
             raise RegistryError(f"invalid state {state!r}")
         d = self._load()
         existing = [m for m in d["models"] if m["name"] == name]
-        entry = {"id": uuid.uuid4().hex[:12], "name": name, "version": len(existing) + 1,
+        entry = {"id": uuid.uuid4().hex[:12], "name": name, "version": max((m["version"] for m in existing), default=0) + 1,
                  "created": time.time(), "state": state, "origin": origin,        # origin: scratch | expanded (never "pretrained")
                  "parent": parent, "config": config, "param_count": param_count, "layers": config["n_layer"],
                  "hidden": config["d_model"], "heads": config["n_head"], "vocab_size": config["vocab_size"],
@@ -86,6 +86,21 @@ class Registry:
                 self._save(d)
                 return m
         raise RegistryError(f"unknown model {model_id!r}")
+
+    def delete(self, model_id: str) -> dict:
+        """Remove a registry entry (the caller deletes its files). Clears best/production pointers that referenced it."""
+        d = self._load()
+        entry = next((m for m in d["models"] if m["id"] == model_id), None)
+        if entry is None:
+            raise RegistryError(f"unknown model {model_id!r}")
+        d["models"] = [m for m in d["models"] if m["id"] != model_id]
+        if d["best"] == model_id:
+            d["best"] = None
+        if d["production"] == model_id:
+            d["production"] = None
+        d["production_history"] = [i for i in d["production_history"] if i != model_id]
+        self._save(d)
+        return entry
 
     def set_best(self, model_id: str) -> None:
         d = self._load()

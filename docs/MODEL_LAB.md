@@ -15,8 +15,33 @@ It never downloads or loads a pretrained model, and the speech application does 
 | Registry + promotion | `registry.py` | `random_init`, `expanded`, `trained`, `eval_passed`, `eval_failed`, `promoted`, `superseded`; promotion needs `eval_passed` **and** explicit approval; rollback keeps history |
 | Expansion | `expand.py` | depth / FFN width / heads / sequence length are function-preserving; `d_model` growth is not and is reported as such |
 | Memory budget | `memory.py` | estimate before allocating, safety margin (`MODEL_LAB_SAFETY_MARGIN_GB`, default 1 GB), hard floor, ok / needs_confirmation / refuse, measured peak RSS |
+| Experience capture (opt-in, no PyTorch) | `speech_engine/experience.py` | consent, text + recheck outcome, export/delete |
 | Orchestration, CLI, worker | `lab.py`, `cli.py`, `worker.py` | the worker is a separate process speaking the existing JSON-lines protocol |
 | Qt UI | `gui/src/ui/ModelLabDialog.*` | Tools menu > Model Lab (Ctrl+M) |
+
+## One model that learns from your speech
+**Only one model exists.** You create it in Model Lab (Tools > Model Lab, Ctrl+M). Training never adds models: it makes a temporary
+*candidate*, compares it with the current model on the same dataset, and waits. **Replace current model with candidate** (your click)
+deletes the old model's files; **Discard candidate** deletes the candidate. Creating a new random model or expanding asks first because
+it deletes the current one (and a replacement that would not fit in memory is refused *before* anything is deleted).
+
+**Learning from the speech you generate is opt-in and local.** Switch on *Let the model learn from the speech I generate* in Model Lab
+(default off; switching it off stops capture immediately). Then:
+1. Each generation stores the **text** of its chunks (not audio: a text model cannot learn from a waveform) in
+   `%LOCALAPPDATA%\speech_engine\experience`.
+2. **Recheck Speech** attaches an outcome to each chunk of the *original* audio: `yes` = issues found / failed, `no` = every automated
+   check passed. This label comes from the speech recogniser plus phoneme comparison, an independent check, not from this model. It is
+   imperfect (the recogniser can be wrong). Results from a mock recogniser, from a run where the recogniser itself failed, and from
+   repaired versions are never turned into labels, and a label is set once.
+3. **Train from my speech** builds a `needs_review` dataset from the rechecked chunks (newest 15% held out as the regression set, so the
+   model is judged on newer documents than it trained on) and trains a candidate. The task is: *from the text alone, will this segment
+   probably need a pronunciation review?* It needs at least 60 rechecked segments with 15 of each outcome; with less it says so instead
+   of training on noise. Generations that were never rechecked stay stored but are not used.
+4. You can export or delete everything stored (buttons in Model Lab). Nothing is uploaded.
+
+Honest limits: this teaches the model a *predictor* trained on imperfect labels, not how to pronounce anything; a small model may well
+fail to beat the rule baseline, and the candidate comparison shows that number next to every result. Audio is not stored; storing it
+would add privacy exposure and nothing a text model can use.
 
 ## The task, and where the data comes from
 **Task:** given a text segment, name the pronunciation-risk category it contains: `plain, number, date, unit, abbreviation, acronym, heteronym`.
@@ -36,7 +61,7 @@ open-ended text correction, phonetics, or anything that needs world knowledge. T
 should stay a separate, modular component (the optional LLM layer in `speech_engine/llm/`). Nothing here claims otherwise.
 
 ## Real results on this machine (i5-12450H, 16 GB RAM, CPU only, PyTorch 2.13)
-Produced by `python -m model_lab.experiments`; the raw report is `lab_reports/experiment_report.json`. Dataset `v0001-fa4f3045`
+Measured *before* the single-model change (it predates the task tags and the fixed alphabet, so exact numbers would differ on a re-run); the 13 models it created were deleted afterwards. Produced by `python -m model_lab.experiments`; the raw report is `lab_reports/experiment_report.json`. Dataset `v0001-fa4f3045`
 (synthetic; 2,800 train / 356 val / 341 test / 434 held-out regression). 1,500 steps, batch 32, all from random init (seed 11).
 
 | Size (actual params) | Train time | Peak RSS (est.) | Val acc | Test acc | Held-out regression acc | Outcome |

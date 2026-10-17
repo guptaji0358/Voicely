@@ -25,6 +25,11 @@ class Tokenizer:
         return len(self.vocab)
 
     @classmethod
+    def from_alphabet(cls, chars) -> "Tokenizer":
+        """Character tokenizer over a FIXED alphabet (the vocabulary must not change once a model exists)."""
+        return cls(list(SPECIALS) + sorted(set(chars)))
+
+    @classmethod
     def train(cls, texts, vocab_size: int | None = None) -> "Tokenizer":
         """Characters seen in ``texts``; if ``vocab_size`` is larger, add BPE merges until it is reached (or no pair repeats)."""
         words: Counter = Counter()

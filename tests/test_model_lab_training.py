@@ -383,6 +383,9 @@ class LabProc:
         self.p = subprocess.Popen([sys.executable, "-X", "utf8", "-m", "model_lab.worker"], cwd=ROOT, env=env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self.n = 0
+        self.watchdog = threading.Timer(420, self.p.kill)   # a protocol bug must fail this test, never hang the suite
+        self.watchdog.daemon = True                          # and the timer itself must never keep pytest alive
+        self.watchdog.start()
         self.ready = self.read()
 
     def send(self, action, **kw):
@@ -393,7 +396,9 @@ class LabProc:
         return rid
 
     def read(self):
-        return json.loads(self.p.stdout.readline())
+        line = self.p.stdout.readline()
+        assert line, "the worker closed its output (killed by the watchdog or crashed)"
+        return json.loads(line)
 
     def until(self, rid):
         events = []
@@ -405,6 +410,7 @@ class LabProc:
                 events.append(m)
 
     def close(self):
+        self.watchdog.cancel()
         self.p.stdin.close()
         try:
             self.p.wait(15)
@@ -421,16 +427,20 @@ def test_worker_protocol_validation_events_busy_and_cancel(tmp_path):
         w.p.stdin.write(b"not json\n"); w.p.stdin.flush()
         assert w.read()["code"] == "MALFORMED_REQUEST"
         assert w.until(w.send("explode"))[0]["code"] == "UNKNOWN_ACTION"
-        assert w.until(w.send("train", model_id="nope", dataset="x", steps=-5))[0]["code"] == "INVALID_REQUEST"
+        assert w.until(w.send("train", dataset="x", steps=-5))[0]["code"] == "INVALID_REQUEST"
         assert w.until(w.send("promote", model_id="x"))[0]["code"] == "INVALID_REQUEST"      # no approval flag
         r, _ = w.until(w.send("make_dataset", n_per_label=40))
         ds = r["manifest"]["path"]
-        r, _ = w.until(w.send("init_model", name="w", dataset=ds, size="10K"))
+        r, _ = w.until(w.send("train", dataset=ds, steps=5))                                 # no model yet: a clear error, not a hang
+        assert r["code"] == "MODEL_MISSING"
+        r, _ = w.until(w.send("create_main", dataset=ds, size="10K", name="w"))
         mid = r["model"]["id"]
-        assert r["model"]["state"] == "random_init"
+        assert r["model"]["state"] == "random_init" and r["model"]["notes"]["role"] == "active"
+        r, _ = w.until(w.send("create_main", dataset=ds, size="10K", name="w"))             # a second model is refused, not added
+        assert r["code"] == "MODEL_EXISTS"
         r, _ = w.until(w.send("estimate", model_id=mid, batch_size=16))
         assert r["decision"]["verdict"] in ("ok", "needs_confirmation") and r["total"] > r["weights"]
-        rid = w.send("train", model_id=mid, dataset=ds, steps=4000, batch_size=16, eval_every=20)
+        rid = w.send("train", dataset=ds, steps=4000, batch_size=16, eval_every=20)
         busy = w.send("evaluate", model_id=mid, dataset=ds)
         assert w.until(busy)[0]["code"] == "BUSY"
         got_metric = False
@@ -446,7 +456,12 @@ def test_worker_protocol_validation_events_busy_and_cancel(tmp_path):
                 break
         assert m["status"] == "cancelled" and m["result"]["steps_done"] < 4000 and Path(m["result"]["run_dir"], "latest.pt").exists()
         r, _ = w.until(w.send("lab_status"))
-        assert r["models"][0]["id"] == mid and r["production"] is None
+        assert r["active"] == mid and r["candidate"] is None and len(r["models"]) == 1 and r["production"] is None
+        assert r["experience"]["consent"] is False                                           # learning is off by default
+        r, _ = w.until(w.send("experience", op="set_consent", enabled="yes"))
+        assert r["code"] == "INVALID_REQUEST"
+        r, _ = w.until(w.send("experience", op="delete_all"))
+        assert r["code"] == "INVALID_REQUEST"                                                # deleting needs explicit confirmation
     finally:
         w.close()
 

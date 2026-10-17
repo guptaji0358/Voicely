@@ -20,8 +20,8 @@ from pathlib import Path
 
 from speech_engine.worker import PROTOCOL_VERSION, SUPPORTED_VERSIONS, _Out, log
 
-JOB_ACTIONS = {"train", "evaluate", "make_dataset"}
-SYNC_ACTIONS = {"lab_status", "estimate", "init_model", "expand", "promote", "rollback", "history", "delete_dataset",
+JOB_ACTIONS = {"train", "learn", "evaluate", "make_dataset"}
+SYNC_ACTIONS = {"experience", "create_main", "accept_candidate", "reject_candidate", "cleanup_models", "expand_active", "lab_status", "estimate", "init_model", "expand", "promote", "rollback", "history", "delete_dataset",
                 "datasets", "dataset_info"}
 
 
@@ -123,6 +123,10 @@ class LabWorker:
             if text.startswith(prefix) or ("LabError" in type(exc).__name__ and text.startswith(prefix)):
                 return code, text
         name = type(exc).__name__
+        import re
+        m = re.match(r"([A-Z][A-Z_]{3,}): (.*)", text, re.S)           # LabError("NOT_ENOUGH_DATA: ...") carries its own code
+        if m and name == "LabError":
+            return m.group(1), m.group(2)
         if name in ("RegistryError", "DatasetError", "CheckpointError", "ExpansionError", "TrainingError", "LabError"):
             return name.replace("Error", "").upper() + "_ERROR", text
         return "INTERNAL_ERROR", msg
@@ -149,12 +153,54 @@ class LabWorker:
                 return self.ok(rid, cancelling=True)
         self.error(rid, "NOT_RUNNING", f"no running job {target!r}")
 
+    def experience_op(self, rid, req):
+        """Opt-in learning record (consent, stats, export, delete). Needs no PyTorch, so it works even when Model Lab cannot train."""
+        from speech_engine.experience import ExperienceStore
+        store, op = ExperienceStore(), req.get("op")
+        if op == "stats":
+            return self.ok(rid, **store.stats())
+        if op == "set_consent":
+            if not isinstance(req.get("enabled"), bool):
+                raise BadRequest("enabled must be true or false")
+            store.set_consent(req["enabled"])
+            return self.ok(rid, **store.stats())
+        if op == "list":
+            return self.ok(rid, records=store.list(_int(req, "limit", 100, 1, 1000)), **store.stats())
+        if op == "export":
+            return self.ok(rid, **store.export(_str(req, "dest")))
+        if op == "delete_all":
+            if req.get("confirmed") is not True:
+                raise BadRequest("deleting everything needs confirmed=true")
+            return self.ok(rid, deleted=store.delete_all(), **store.stats())
+        raise BadRequest("op must be stats, set_consent, list, export or delete_all")
+
     def run_sync(self, rid, action, req):
+        if action == "experience":
+            return self.experience_op(rid, req)
         lab = self.lab()
-        if action == "lab_status":
+        if action == "create_main":
+            ds = _str(req, "dataset", False)
+            if not ds:                                   # a tiny synthetic dataset only defines the fixed alphabet and the first task
+                ds = lab.make_synthetic_dataset("review-category", 40)["path"]
+            e = lab.create_main(Path(ds), size=_str(req, "size"), name=_str(req, "name", False, 60) or "main",
+                                max_seq=_int(req, "max_seq", 448, 16, 4096), seed=_int(req, "seed", 0, 0, 2**31 - 1),
+                                replace=bool(req.get("replace")), confirmed=bool(req.get("confirmed")))
+            self.ok(rid, model=e)
+        elif action == "accept_candidate":
+            self.ok(rid, model=lab.accept_candidate())
+        elif action == "reject_candidate":
+            self.ok(rid, **lab.reject_candidate())
+        elif action == "cleanup_models":
+            self.ok(rid, **lab.cleanup_models(_str(req, "keep_id", False)))
+        elif action == "expand_active":
+            self.ok(rid, **lab.expand_active(_int(req, "target_parameters", None, 1, 10**11), seed=_int(req, "seed", 0, 0, 2**31 - 1),
+                                             confirmed=bool(req.get("confirmed"))))
+        elif action == "lab_status":
             from model_lab import memory
+            from speech_engine.experience import ExperienceStore
             self.ok(rid, models=lab.registry.models(), **lab.registry.status(), datasets=lab.datasets(), memory=memory.system_memory(),
-                    root=str(lab.root))
+                    root=str(lab.root), active=(lab.active() or {}).get("id"), candidate=(lab.candidate() or {}).get("id"),
+                    experience=ExperienceStore().stats())
         elif action == "datasets":
             self.ok(rid, datasets=lab.datasets())
         elif action == "dataset_info":
@@ -226,8 +272,11 @@ class LabWorker:
                     if e["type"] == "train":
                         self.event(rid, "progress", progress=int(100 * e["step"] / steps),
                                    message=f"step {e['step']}/{steps}  loss {e['loss']:.4f}")
-            res = lab.train(_str(req, "model_id"), Path(_str(req, "dataset")), tc, confirmed=bool(req.get("confirmed")), cancel=cancel,
-                            on_event=on_event, resume_run=_str(req, "resume_run", False))
+            if action == "learn":
+                res = lab.learn_from_generations(tc, confirmed=bool(req.get("confirmed")), cancel=cancel, on_event=on_event)
+            else:
+                res = lab.train_candidate(Path(_str(req, "dataset")), tc, confirmed=bool(req.get("confirmed")), cancel=cancel,
+                                          on_event=on_event, resume_run=_str(req, "resume_run", False))
             status = "cancelled" if res["status"] == "cancelled" else "success"
             self.out.send({"request_id": rid, "status": status, "result": res})
         except BadRequest as exc:

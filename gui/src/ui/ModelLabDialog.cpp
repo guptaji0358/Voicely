@@ -7,9 +7,10 @@
 #include "ProtocolClient.h"
 #include "ThemeManager.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QFontMetrics>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -33,6 +34,7 @@ QString params(qint64 n) {
     if (n >= 1000) return QString::number(n / 1e3, 'f', 1) + " K";
     return QString::number(n);
 }
+QString pct(double v) { return QString::number(v * 100, 'f', 1) + "%"; }
 }  // namespace
 
 // ------------------------------------------------------------------------------------------ LossChart
@@ -95,13 +97,12 @@ void LossChart::paintEvent(QPaintEvent *) {
 QString ModelLabDialog::stateText(const QString &s, bool training) {
     if (training) return tr("Training in progress");
     if (s == "random_init") return tr("Randomly initialized (untrained)");
-    if (s == "expanded") return tr("Expanded - needs training before use");
+    if (s == "expanded") return tr("Expanded - needs training before it is any better");
     if (s == "trained") return tr("Training completed (not yet evaluated)");
-    if (s == "eval_passed") return tr("Evaluation passed (not promoted)");
+    if (s == "eval_passed") return tr("Evaluation passed");
     if (s == "eval_failed") return tr("Evaluation failed");
     if (s == "promoted") return tr("Promoted to production");
-    if (s == "superseded") return tr("Superseded by a newer production model");
-    return tr("No model selected");
+    return tr("No model yet");
 }
 
 ModelLabDialog::ModelLabDialog(const QProcessEnvironment &env, QWidget *parent) : QDialog(parent), m_client(new ProtocolClient(this)) {
@@ -111,8 +112,8 @@ ModelLabDialog::ModelLabDialog(const QProcessEnvironment &env, QWidget *parent) 
     m_confirm = [this](const QString &title, const QString &text) {
         return QMessageBox::question(this, title, text) == QMessageBox::Yes;
     };
-    resize(1080, 760);
-    setMinimumSize(900, 620);
+    resize(1100, 800);
+    setMinimumSize(920, 640);
     buildUi();
     connect(m_client, &ProtocolClient::logLine, this, [this](const QString &l) { log(l); });
     connect(m_client, &ProtocolClient::progress, this, [this](const QString &id, int pct, const QString &msg) {
@@ -138,6 +139,8 @@ ModelLabDialog::ModelLabDialog(const QProcessEnvironment &env, QWidget *parent) 
                 m_banner->setText(r.value("problem").toString());
                 m_banner->show();
                 setPhase(Phase::Unavailable, tr("PyTorch is not available for Model Lab"));
+                // the opt-in switches still work without PyTorch: they only touch local files
+                m_client->call("experience", {{"op", "stats"}}, this, [this](const QString &s2, const QJsonObject &e) { if (s2 == "success") updateExperience(e); });
                 return;
             }
             const auto mem = r.value("memory").toObject();
@@ -173,7 +176,8 @@ void ModelLabDialog::buildUi() {
     auto *title = new QLabel(tr("Model Lab")); title->setObjectName("title");
     m_icon = new StateIcon(18);
     m_status = new QLabel(tr("Starting Model Lab worker...")); m_status->setObjectName("statusLabel");
-    m_stateLabel = new QLabel(tr("No model selected")); m_stateLabel->setObjectName("labState");
+    m_status->setWordWrap(true);
+    m_stateLabel = new QLabel(tr("No model yet")); m_stateLabel->setObjectName("labState");
     m_stateLabel->setStyleSheet("padding:3px 10px; border-radius:10px; background:palette(mid);");
     head->addWidget(title); head->addSpacing(10); head->addWidget(m_icon); head->addWidget(m_status, 1); head->addWidget(m_stateLabel);
     root->addLayout(head);
@@ -184,22 +188,39 @@ void ModelLabDialog::buildUi() {
     root->addWidget(m_banner);
 
     auto *cols = new QHBoxLayout; cols->setSpacing(12);
-    // ---- left: models
+    // ---- left: the model, learning from my speech, dataset
     auto *left = new QVBoxLayout;
     m_tree = new QTreeWidget; m_tree->setObjectName("modelTree");
     m_tree->setHeaderLabels({tr("Model"), tr("Parameters"), tr("Layers/hidden/heads"), tr("State"), tr("Steps"), tr("Val acc.")});
     m_tree->setRootIsDecorated(false); m_tree->setAlternatingRowColors(true);
+    m_tree->setMaximumHeight(110);
     m_tree->header()->setStretchLastSection(false);
     m_tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    left->addWidget(new QLabel(tr("Models and checkpoints")));
-    left->addWidget(m_tree, 1);
+    left->addWidget(new QLabel(tr("Your model (only one exists; a trained candidate appears here until you decide)")));
+    left->addWidget(m_tree);
+
+    auto *lg = new QGroupBox(tr("Learn from my speech"));
+    auto *ll = new QVBoxLayout(lg);
+    m_consent = new QCheckBox(tr("Let the model learn from the speech I generate (kept only on this computer)"));
+    m_consent->setObjectName("labConsent");
+    m_consent->setToolTip(tr("Off by default. When on, the TEXT of each generation is remembered; Recheck Speech labels it (issues found / verified). "
+                             "Audio is not stored. Nothing is uploaded."));
+    m_experienceLabel = new QLabel(tr("My speech: no data yet.")); m_experienceLabel->setObjectName("labExperience"); m_experienceLabel->setWordWrap(true);
+    auto *lb = new QHBoxLayout;
+    m_btnLearn = new AnimatedButton(tr("Train from my speech")); m_btnLearn->setObjectName("labLearn");
+    m_btnExport = new AnimatedButton(tr("Export...")); m_btnExport->setObjectName("labExport");
+    m_btnForget = new AnimatedButton(tr("Delete my stored speech data")); m_btnForget->setObjectName("labForget");
+    lb->addWidget(m_btnLearn, 1); lb->addWidget(m_btnExport); lb->addWidget(m_btnForget);
+    ll->addWidget(m_consent); ll->addWidget(m_experienceLabel); ll->addLayout(lb);
+    left->addWidget(lg);
+
     auto *dsRow = new QHBoxLayout;
     m_dataset = new QComboBox; m_dataset->setObjectName("datasetCombo"); m_dataset->setMinimumWidth(240);
     m_btnData = new AnimatedButton(tr("New synthetic dataset")); m_btnData->setObjectName("labMakeData");
     dsRow->addWidget(new QLabel(tr("Dataset"))); dsRow->addWidget(m_dataset, 1); dsRow->addWidget(m_btnData);
     left->addLayout(dsRow);
     auto *mk = new QHBoxLayout;
-    m_name = new QLineEdit("lab-model"); m_name->setObjectName("labName");
+    m_name = new QLineEdit("main"); m_name->setObjectName("labName");
     m_size = new QComboBox; m_size->setObjectName("labSize");
     for (const char *s : {"1K", "10K", "100K", "1M", "10M", "100M", "1B", "8B"}) m_size->addItem(s);
     m_size->setCurrentText("100K");
@@ -207,18 +228,19 @@ void ModelLabDialog::buildUi() {
     m_btnCreate = new AnimatedButton(tr("Create random model")); m_btnCreate->setObjectName("labCreate");
     mk->addWidget(new QLabel(tr("Name"))); mk->addWidget(m_name, 1); mk->addWidget(m_size); mk->addWidget(m_btnCreate);
     left->addLayout(mk);
+    left->addStretch(1);
     cols->addLayout(left, 5);
 
     // ---- right: training
     auto *right = new QVBoxLayout;
-    auto *tg = new QGroupBox(tr("Training"));
+    auto *tg = new QGroupBox(tr("Training (makes a candidate; nothing is replaced until you accept it)"));
     auto *tf = new QFormLayout(tg);
     m_steps = new QSpinBox; m_steps->setRange(1, 1000000); m_steps->setValue(600); m_steps->setObjectName("labSteps");
     m_batch = new QSpinBox; m_batch->setRange(1, 1024); m_batch->setValue(32); m_batch->setObjectName("labBatch");
     m_lr = new QDoubleSpinBox; m_lr->setDecimals(5); m_lr->setRange(0.00001, 1.0); m_lr->setSingleStep(0.0005); m_lr->setValue(0.003); m_lr->setObjectName("labLr");
     tf->addRow(tr("Steps"), m_steps); tf->addRow(tr("Batch size"), m_batch); tf->addRow(tr("Learning rate"), m_lr);
     auto *tb = new QHBoxLayout;
-    m_btnTrain = new AnimatedButton(tr("Train")); m_btnTrain->setObjectName("labTrain");
+    m_btnTrain = new AnimatedButton(tr("Train on dataset")); m_btnTrain->setObjectName("labTrain");
     m_btnPause = new AnimatedButton(tr("Pause")); m_btnPause->setObjectName("labPause");
     m_btnPause->setToolTip(tr("Stops at the next step and keeps a resumable checkpoint"));
     m_btnResume = new AnimatedButton(tr("Resume")); m_btnResume->setObjectName("labResume");
@@ -229,18 +251,19 @@ void ModelLabDialog::buildUi() {
     m_progress = new SmoothProgressBar; m_progress->setObjectName("labProgress");
     m_step = new QLabel; m_step->setObjectName("muted");
     right->addWidget(m_progress); right->addWidget(m_step);
-    m_memory = new QLabel(tr("Memory: select a model to see the estimate.")); m_memory->setObjectName("labMemory"); m_memory->setWordWrap(true);
+    m_memory = new QLabel(tr("Memory: the estimate appears here.")); m_memory->setObjectName("labMemory"); m_memory->setWordWrap(true);
     right->addWidget(m_memory);
-    auto *eg = new QGroupBox(tr("Evaluation, expansion, promotion"));
+    auto *eg = new QGroupBox(tr("Decide, evaluate, grow"));
     auto *el = new QGridLayout(eg);
-    m_btnEval = new AnimatedButton(tr("Evaluate")); m_btnEval->setObjectName("labEval");
+    m_btnAccept = new AnimatedButton(tr("Replace current model with candidate")); m_btnAccept->setObjectName("labAccept");
+    m_btnReject = new AnimatedButton(tr("Discard candidate")); m_btnReject->setObjectName("labReject");
+    m_btnEval = new AnimatedButton(tr("Evaluate current model")); m_btnEval->setObjectName("labEval");
     m_target = new QSpinBox; m_target->setRange(1000, 2000000000); m_target->setSingleStep(100000); m_target->setValue(1000000); m_target->setObjectName("labTarget");
-    m_target->setToolTip(tr("Target parameter count. Expansion adds capacity, not knowledge: the new model must be trained."));
-    m_btnExpand = new AnimatedButton(tr("Expand to target")); m_btnExpand->setObjectName("labExpand");
-    m_btnPromote = new AnimatedButton(tr("Promote to production...")); m_btnPromote->setObjectName("labPromote");
-    m_btnRollback = new AnimatedButton(tr("Roll back")); m_btnRollback->setObjectName("labRollback");
-    el->addWidget(m_btnEval, 0, 0); el->addWidget(m_target, 1, 0); el->addWidget(m_btnExpand, 1, 1);
-    el->addWidget(m_btnPromote, 2, 0); el->addWidget(m_btnRollback, 2, 1);
+    m_target->setToolTip(tr("Target parameter count. Expansion adds capacity, not knowledge: the larger model must be trained."));
+    m_btnExpand = new AnimatedButton(tr("Expand current model")); m_btnExpand->setObjectName("labExpand");
+    el->addWidget(m_btnAccept, 0, 0); el->addWidget(m_btnReject, 0, 1);
+    el->addWidget(m_btnEval, 1, 0, 1, 2);
+    el->addWidget(m_target, 2, 0); el->addWidget(m_btnExpand, 2, 1);
     right->addWidget(eg);
     right->addStretch(1);
     cols->addLayout(right, 4);
@@ -250,7 +273,7 @@ void ModelLabDialog::buildUi() {
     root->addWidget(m_chart, 2);
     auto *bottom = new QHBoxLayout;
     m_eval = new QPlainTextEdit; m_eval->setObjectName("labEvalText"); m_eval->setReadOnly(true);
-    m_eval->setPlaceholderText(tr("Evaluation results and expansion reports appear here."));
+    m_eval->setPlaceholderText(tr("Results of training, evaluation and expansion appear here."));
     m_log = new QPlainTextEdit; m_log->setObjectName("labLog"); m_log->setReadOnly(true); m_log->setMaximumBlockCount(1500);
     m_log->setPlaceholderText(tr("Worker log and errors"));
     bottom->addWidget(m_eval, 3); bottom->addWidget(m_log, 2);
@@ -259,19 +282,24 @@ void ModelLabDialog::buildUi() {
     connect(m_btnData, &QPushButton::clicked, this, [this] { createDataset(); });
     connect(m_btnCreate, &QPushButton::clicked, this, [this] { createModel(); });
     connect(m_btnTrain, &QPushButton::clicked, this, [this] { startTraining(false); });
+    connect(m_btnLearn, &QPushButton::clicked, this, [this] { learnFromMySpeech(); });
     connect(m_btnResume, &QPushButton::clicked, this, [this] { startTraining(true); });
     connect(m_btnPause, &QPushButton::clicked, this, [this] { pauseTraining(); });
     connect(m_btnCancel, &QPushButton::clicked, this, [this] { cancelTraining(); });
-    connect(m_btnEval, &QPushButton::clicked, this, [this] { evaluateSelected(); });
-    connect(m_btnExpand, &QPushButton::clicked, this, [this] { expandSelected(); });
-    connect(m_btnPromote, &QPushButton::clicked, this, [this] { promoteSelected(); });
-    connect(m_btnRollback, &QPushButton::clicked, this, [this] { rollback(); });
-    connect(m_tree, &QTreeWidget::currentItemChanged, this, [this] {
-        const QJsonObject m = selectedModel();
-        m_stateLabel->setText(stateText(m.value("state").toString(), false));
-        updateButtons();
-        requestEstimate();
+    connect(m_btnEval, &QPushButton::clicked, this, [this] { evaluateModel(); });
+    connect(m_btnExpand, &QPushButton::clicked, this, [this] { expandModel(); });
+    connect(m_btnAccept, &QPushButton::clicked, this, [this] { acceptCandidate(); });
+    connect(m_btnReject, &QPushButton::clicked, this, [this] { rejectCandidate(); });
+    connect(m_btnForget, &QPushButton::clicked, this, [this] { deleteMyData(); });
+    connect(m_btnExport, &QPushButton::clicked, this, [this] {
+        const QString dir = QFileDialog::getExistingDirectory(this, tr("Export my stored speech data to..."));
+        if (dir.isEmpty()) return;
+        m_client->call("experience", {{"op", "export"}, {"dest", dir}}, this, [this](const QString &st, const QJsonObject &r) {
+            if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
+            m_status->setText(tr("Exported %1 records to %2").arg(r.value("records").toInt()).arg(r.value("path").toString()));
+        });
     });
+    connect(m_consent, &QCheckBox::toggled, this, [this](bool on) { if (!m_updatingConsent) setLearning(on); });
     connect(m_batch, qOverload<int>(&QSpinBox::valueChanged), this, [this] { requestEstimate(); });
     updateButtons();
 }
@@ -298,27 +326,13 @@ void ModelLabDialog::showError(const QString &code, const QString &message) {
     m_status->setText(m_lastError);
 }
 
-QString ModelLabDialog::selectedModelId() const {
-    auto *it = m_tree->currentItem();
-    return it ? it->data(0, Qt::UserRole).toString() : QString();
-}
-
-QJsonObject ModelLabDialog::selectedModel() const {
-    const QString id = selectedModelId();
+QJsonObject ModelLabDialog::modelById(const QString &id) const {
     for (const auto &v : m_models) if (v.toObject().value("id").toString() == id) return v.toObject();
     return {};
 }
 
 QString ModelLabDialog::selectedDataset() const { return m_dataset->currentData().toString(); }
 int ModelLabDialog::modelCount() const { return m_tree->topLevelItemCount(); }
-
-bool ModelLabDialog::selectModelByState(const QString &state) {
-    for (int i = m_tree->topLevelItemCount() - 1; i >= 0; --i) {
-        auto *it = m_tree->topLevelItem(i);
-        if (it->data(0, Qt::UserRole + 1).toString() == state) { m_tree->setCurrentItem(it); return true; }
-    }
-    return false;
-}
 
 void ModelLabDialog::setHyperparameters(int steps, int batch, double lr, int sizeIndex) {
     m_steps->setValue(steps); m_batch->setValue(batch); m_lr->setValue(lr);
@@ -328,19 +342,23 @@ void ModelLabDialog::setHyperparameters(int steps, int batch, double lr, int siz
 void ModelLabDialog::updateButtons() {
     const bool ready = m_phase == Phase::Ready;
     const bool training = m_phase == Phase::Training;
-    const QJsonObject m = selectedModel();
-    const bool haveModel = !m.isEmpty(), haveData = m_dataset->count() > 0;
+    const bool haveModel = !m_activeId.isEmpty();
+    const QJsonObject cand = modelById(m_candidateId);
     m_btnData->setEnabled(ready);
-    m_btnCreate->setEnabled(ready && haveData);
-    m_btnTrain->setEnabled(ready && haveModel && haveData);
+    m_btnCreate->setEnabled(ready);
+    m_btnCreate->setText(haveModel ? tr("Replace with a new random model") : tr("Create random model"));
+    m_btnTrain->setEnabled(ready && haveModel && m_dataset->count() > 0);
+    m_btnLearn->setEnabled(ready && haveModel);
     m_btnPause->setEnabled(training);
     m_btnCancel->setEnabled(training);
-    m_btnResume->setEnabled(ready && haveModel && haveData && !m_resumeRun.isEmpty());
-    m_btnEval->setEnabled(ready && haveModel && haveData);
+    m_btnResume->setEnabled(ready && haveModel && !m_resumeRun.isEmpty());
+    m_btnEval->setEnabled(ready && haveModel && m_dataset->count() > 0);
     m_btnExpand->setEnabled(ready && haveModel);
-    m_btnPromote->setEnabled(ready && m.value("state").toString() == "eval_passed");
-    m_btnRollback->setEnabled(ready && !m_production.isEmpty());
-    m_tree->setEnabled(!training);
+    m_btnAccept->setEnabled(ready && cand.value("state").toString() == "eval_passed");
+    m_btnReject->setEnabled(ready && !m_candidateId.isEmpty());
+    m_consent->setEnabled(m_phase != Phase::Starting);
+    m_btnForget->setEnabled(m_phase != Phase::Starting && m_experience.value("total").toInt() > 0);
+    m_btnExport->setEnabled(m_phase != Phase::Starting && m_experience.value("total").toInt() > 0);
 }
 
 void ModelLabDialog::refresh() {
@@ -350,33 +368,45 @@ void ModelLabDialog::refresh() {
     }, 60000);
 }
 
+void ModelLabDialog::updateExperience(const QJsonObject &e) {
+    m_experience = e;
+    m_updatingConsent = true;
+    m_consent->setChecked(e.value("consent").toBool());
+    m_updatingConsent = false;
+    const int total = e.value("total").toInt();
+    m_experienceLabel->setText(
+        total == 0 ? tr("My speech: nothing stored. %1").arg(e.value("consent").toBool() ? tr("Learning is ON: generate speech, then run Recheck Speech to label it.")
+                                                                                         : tr("Learning is OFF."))
+                   : tr("My speech: %1 segments stored, %2 rechecked (%3 with issues, %4 verified), %5 waiting for Recheck Speech. Learning is %6. Stored in %7")
+                         .arg(total).arg(e.value("labelled").toInt()).arg(e.value("yes").toInt()).arg(e.value("no").toInt())
+                         .arg(e.value("unlabelled").toInt()).arg(e.value("consent").toBool() ? tr("ON") : tr("OFF"), e.value("path").toString()));
+    updateButtons();
+}
+
 void ModelLabDialog::onModels(const QJsonObject &r) {
-    const QString keep = selectedModelId();
     m_models = r.value("models").toArray();
     m_datasets = r.value("datasets").toArray();
-    m_production = r.value("production").toString();
-    m_best = r.value("best").toString();
+    m_activeId = r.value("active").toString();
+    m_candidateId = r.value("candidate").toString();
+    updateExperience(r.value("experience").toObject());
     m_tree->clear();
-    QTreeWidgetItem *sel = nullptr;
-    for (const auto &v : m_models) {
-        const QJsonObject m = v.toObject();
+    for (const QString &id : {m_activeId, m_candidateId}) {
+        const QJsonObject m = modelById(id);
+        if (m.isEmpty()) continue;
         const QJsonObject res = m.value("metrics").toObject().value("evaluation").toObject().value("results").toObject();
         const double acc = res.value("val").toObject().value("accuracy").toDouble(-1);
         auto *it = new QTreeWidgetItem(m_tree);
-        const QString id = m.value("id").toString();
-        it->setText(0, QString("%1%2 v%3").arg(id == m_production ? QString::fromUtf8("★ ") : QString(), m.value("name").toString()).arg(m.value("version").toInt()));
+        it->setText(0, id == m_activeId ? tr("Current model: %1").arg(m.value("name").toString()) : tr("Trained candidate (waiting for your decision)"));
         it->setText(1, params(qint64(m.value("param_count").toDouble())));
         it->setText(2, QString("%1 / %2 / %3").arg(m.value("layers").toInt()).arg(m.value("hidden").toInt()).arg(m.value("heads").toInt()));
-        it->setText(3, stateText(m.value("state").toString(), false) + (id == m_best ? tr("  [best]") : QString()));
+        it->setText(3, stateText(m.value("state").toString(), false));
         it->setText(4, QString::number(m.value("steps").toInt()));
-        it->setText(5, acc >= 0 ? QString::number(acc * 100, 'f', 1) + "%" : QStringLiteral("-"));
+        it->setText(5, acc >= 0 ? pct(acc) : QStringLiteral("-"));
         it->setData(0, Qt::UserRole, id);
-        it->setData(0, Qt::UserRole + 1, m.value("state").toString());
         it->setToolTip(0, m.value("checkpoint").toString());
-        if (id == keep) sel = it;
     }
-    if (!sel && m_tree->topLevelItemCount()) sel = m_tree->topLevelItem(m_tree->topLevelItemCount() - 1);
-    if (sel) m_tree->setCurrentItem(sel);
+    m_stateLabel->setText(m_candidateId.isEmpty() ? stateText(modelById(m_activeId).value("state").toString(), false)
+                                                  : tr("Candidate waiting for your decision"));
     const QString keepDs = selectedDataset();
     m_dataset->clear();
     for (const auto &v : m_datasets) {
@@ -387,18 +417,36 @@ void ModelLabDialog::onModels(const QJsonObject &r) {
     const int i = m_dataset->findData(keepDs);
     m_dataset->setCurrentIndex(i >= 0 ? i : m_dataset->count() - 1);
     updateButtons();
+    requestEstimate();
 }
 
 void ModelLabDialog::requestEstimate() {
-    const QString id = selectedModelId();
-    if (id.isEmpty() || m_phase != Phase::Ready) return;
-    m_client->call("estimate", {{"model_id", id}, {"batch_size", m_batch->value()}}, this, [this](const QString &st, const QJsonObject &r) {
+    if (m_activeId.isEmpty() || m_phase != Phase::Ready) return;
+    m_client->call("estimate", {{"model_id", m_activeId}, {"batch_size", m_batch->value()}}, this, [this](const QString &st, const QJsonObject &r) {
         if (st != "success") return;
         const QJsonObject d = r.value("decision").toObject();
         m_lastEstimate = tr("Estimated peak training memory: %1 (weights+gradients %2, optimizer %3, activations %4). %5")
                              .arg(mb(r.value("total").toDouble()), mb(r.value("weights").toDouble() + r.value("gradients").toDouble()),
                                   mb(r.value("optimizer").toDouble()), mb(r.value("activations").toDouble()), d.value("reason").toString());
         m_memory->setText(m_lastActual.isEmpty() ? m_lastEstimate : m_lastEstimate + QLatin1Char(0x0A) + m_lastActual);
+    });
+}
+
+void ModelLabDialog::setLearning(bool on) {
+    m_client->call("experience", {{"op", "set_consent"}, {"enabled", on}}, this, [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
+        updateExperience(r);
+        m_status->setText(r.value("consent").toBool() ? tr("Learning is ON. Speech you generate from now on is remembered locally; run Recheck Speech to label it.")
+                                                      : tr("Learning is OFF. Nothing new is being stored."));
+    });
+}
+
+void ModelLabDialog::deleteMyData() {
+    if (!m_confirm(tr("Delete stored speech data"), tr("Delete everything the model has remembered from your speech? This cannot be undone."))) return;
+    m_client->call("experience", {{"op", "delete_all"}, {"confirmed", true}}, this, [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
+        updateExperience(r);
+        m_status->setText(tr("Deleted %1 stored segments.").arg(r.value("deleted").toInt()));
     });
 }
 
@@ -416,30 +464,45 @@ void ModelLabDialog::createDataset() {
 }
 
 void ModelLabDialog::createModel() {
-    if (m_phase != Phase::Ready || selectedDataset().isEmpty()) return;
+    if (m_phase != Phase::Ready) return;
+    const bool replace = !m_activeId.isEmpty();
+    if (replace && !m_confirm(tr("Replace the model"), tr("A model already exists. Creating a new random model deletes the current model and any trained "
+                                                           "candidate. Continue?"))) return;
     setPhase(Phase::Busy, tr("Creating randomly initialized model..."));
-    m_client->call("init_model", {{"name", m_name->text().trimmed()}, {"dataset", selectedDataset()}, {"size", m_size->currentText()}},
-                   this, [this](const QString &st, const QJsonObject &r) {
+    QJsonObject p{{"name", m_name->text().trimmed()}, {"size", m_size->currentText()}, {"replace", replace}};
+    if (!selectedDataset().isEmpty()) p["dataset"] = selectedDataset();
+    m_client->call("create_main", p, this, [this](const QString &st, const QJsonObject &r) {
         setPhase(Phase::Ready);
         if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
         m_status->setText(tr("Created a randomly initialized model with %1 parameters.").arg(qint64(r.value("model").toObject().value("param_count").toDouble())));
+        m_resumeRun.clear();
         refresh();
     }, 300000);
 }
 
 void ModelLabDialog::startTraining(bool resume, bool confirmed) {
-    if (m_phase != Phase::Ready || selectedModelId().isEmpty() || selectedDataset().isEmpty()) return;
-    QJsonObject p{{"model_id", selectedModelId()}, {"dataset", selectedDataset()}, {"steps", m_steps->value()},
-                  {"batch_size", m_batch->value()}, {"lr", m_lr->value()}, {"confirmed", confirmed},
-                  {"eval_every", qMax(10, m_steps->value() / 10)}, {"ckpt_every", qMax(50, m_steps->value() / 5)}};
+    if (m_phase != Phase::Ready || m_activeId.isEmpty() || selectedDataset().isEmpty()) return;
+    QJsonObject p{{"dataset", selectedDataset()}, {"steps", m_steps->value()}, {"batch_size", m_batch->value()}, {"lr", m_lr->value()},
+                  {"confirmed", confirmed}, {"eval_every", qMax(10, m_steps->value() / 10)}, {"ckpt_every", qMax(50, m_steps->value() / 5)}};
     if (resume) p["resume_run"] = m_resumeRun;
+    runTrainingJob("train", p, resume);
+}
+
+void ModelLabDialog::learnFromMySpeech(bool confirmed) {
+    if (m_phase != Phase::Ready || m_activeId.isEmpty()) return;
+    QJsonObject p{{"steps", m_steps->value()}, {"batch_size", m_batch->value()}, {"lr", m_lr->value()}, {"confirmed", confirmed},
+                  {"eval_every", qMax(10, m_steps->value() / 10)}, {"ckpt_every", qMax(50, m_steps->value() / 5)}};
+    runTrainingJob("learn", p, false);
+}
+
+void ModelLabDialog::runTrainingJob(const QString &action, const QJsonObject &params, bool resume) {
     m_chart->clear();
     m_progress->resetNow();
-    m_jobId = m_client->request("train", p);
-    setPhase(Phase::Training, resume ? tr("Resuming training...") : tr("Training..."));
+    m_jobId = m_client->request(action, params);
+    setPhase(Phase::Training, resume ? tr("Resuming training...") : action == "learn" ? tr("Training on my speech...") : tr("Training..."));
     m_stateLabel->setText(stateText({}, true));
     disconnect(m_client, &ProtocolClient::finished, this, nullptr);
-    connect(m_client, &ProtocolClient::finished, this, [this](const QString &id, const QString &status, const QJsonObject &r) {
+    connect(m_client, &ProtocolClient::finished, this, [this, action, params](const QString &id, const QString &status, const QJsonObject &r) {
         if (id != m_jobId) return;
         m_jobId.clear();
         const QJsonObject res = r.value("result").toObject();
@@ -450,10 +513,7 @@ void ModelLabDialog::startTraining(bool resume, bool confirmed) {
             m_lastActual = tr("Last run - estimated peak: %1   Actual peak (worker process): %2   Device: %3")
                                .arg(mb(est), mb(peak), res.value("device").toString());
             m_memory->setText(m_lastEstimate.isEmpty() ? m_lastActual : m_lastEstimate + QLatin1Char(0x0A) + m_lastActual);
-            m_status->setText(tr("Training %1: %2 steps in %3 s, final train loss %4, best validation loss %5")
-                                  .arg(res.value("status").toString()).arg(res.value("steps_done").toInt())
-                                  .arg(res.value("elapsed_s").toDouble(), 0, 'f', 1).arg(res.value("final_train_loss").toDouble(), 0, 'f', 4)
-                                  .arg(res.value("best_val_loss").toDouble(), 0, 'f', 4));
+            showCandidateResult(res);
             setPhase(Phase::Ready);
             refresh();
         } else if (status == "cancelled") {
@@ -464,22 +524,58 @@ void ModelLabDialog::startTraining(bool resume, bool confirmed) {
             const QString code = r.value("code").toString(), msg = r.value("message").toString();
             setPhase(Phase::Ready);
             if (code == "CONFIRMATION_NEEDED") {
-                if (QMessageBox::question(this, tr("Memory warning"), msg + "\n\n" + tr("Start anyway?")) == QMessageBox::Yes) startTraining(false, true);
+                if (m_confirm(tr("Memory warning"), msg + "\n\n" + tr("Start anyway?"))) {
+                    QJsonObject again = params;
+                    again["confirmed"] = true;
+                    runTrainingJob(action, again, false);
+                }
                 return;
             }
             showError(code, msg);
-            m_stateLabel->setText(tr("Training failed"));
+            m_stateLabel->setText(tr("Training did not run"));
         }
     });
+}
+
+void ModelLabDialog::showCandidateResult(const QJsonObject &res) {
+    const QJsonObject cand = res.value("candidate").toObject();
+    const QJsonObject rr = res.value("results").toObject();
+    QString t = tr("Training %1: %2 steps in %3 s. Final train loss %4, best validation loss %5.\n\n")
+                    .arg(res.value("status").toString()).arg(res.value("steps_done").toInt()).arg(res.value("elapsed_s").toDouble(), 0, 'f', 1)
+                    .arg(res.value("final_train_loss").toDouble(), 0, 'f', 4).arg(res.value("best_val_loss").toDouble(), 0, 'f', 4);
+    const QJsonObject ds = res.value("experience_dataset").toObject();
+    if (!ds.isEmpty()) t += tr("Trained on %1: %2 examples (provenance: your own rechecked speech; labels come from Recheck Speech and are imperfect).\n\n")
+                                .arg(ds.value("version").toString()).arg(ds.value("counts").toObject().value("train").toInt());
+    if (!cand.isEmpty()) {
+        const bool passed = cand.value("state").toString() == "eval_passed";
+        t += passed ? tr("CANDIDATE PASSED the checks against the current model.\nClick \"Replace current model with candidate\" to use it (the old model's files are deleted).\n\n")
+                    : tr("CANDIDATE DID NOT PASS. The current model is unchanged. Discard the candidate or train it again.\n\n");
+        for (const char *s : {"val", "regression"}) {
+            const QJsonObject a = rr.value("active").toObject().value(s).toObject(), c = rr.value("candidate").toObject().value(s).toObject();
+            t += tr("%1: current %2   candidate %3   (majority class %4, rule baseline %5, n=%6)\n").arg(QString(s), -11)
+                     .arg(pct(a.value("accuracy").toDouble()), pct(c.value("accuracy").toDouble()), pct(c.value("majority_rate").toDouble()),
+                          pct(c.value("baseline_accuracy").toDouble())).arg(c.value("n").toInt());
+        }
+        t += tr("\nChecks:\n");
+        for (const auto &c : res.value("verdict").toObject().value("checks").toArray()) {
+            const QJsonObject o = c.toObject();
+            t += QString("  [%1] %2 - %3\n").arg(o.value("ok").toBool() ? "pass" : "FAIL", o.value("name").toString(), o.value("detail").toString());
+        }
+    }
+    t += tr("\nLoss/perplexity are task metrics, not a speech-quality measure.");
+    m_eval->setPlainText(t);
+    m_status->setText(cand.isEmpty() ? tr("Training %1.").arg(res.value("status").toString())
+                                     : cand.value("state").toString() == "eval_passed" ? tr("Training finished: the candidate passed. Replace the current model if you want it.")
+                                                                                       : tr("Training finished: the candidate did not pass; the current model was kept."));
 }
 
 void ModelLabDialog::pauseTraining() { if (!m_jobId.isEmpty()) { m_client->cancel(m_jobId); m_status->setText(tr("Pausing at the next step...")); } }
 void ModelLabDialog::cancelTraining() { m_resumeRun.clear(); pauseTraining(); }
 
-void ModelLabDialog::evaluateSelected() {
-    if (m_phase != Phase::Ready || selectedModelId().isEmpty() || selectedDataset().isEmpty()) return;
+void ModelLabDialog::evaluateModel() {
+    if (m_phase != Phase::Ready || m_activeId.isEmpty() || selectedDataset().isEmpty()) return;
     setPhase(Phase::Evaluating, tr("Evaluating on validation, test and held-out regression sets..."));
-    m_client->call("evaluate", {{"model_id", selectedModelId()}, {"dataset", selectedDataset()}}, this,
+    m_client->call("evaluate", {{"model_id", m_activeId}, {"dataset", selectedDataset()}}, this,
                    [this](const QString &st, const QJsonObject &r) {
         setPhase(Phase::Ready);
         if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
@@ -492,10 +588,10 @@ void ModelLabDialog::showEvaluation(const QJsonObject &r) {
     QString t = tr("Dataset %1 - result: %2\n\n").arg(r.value("dataset").toString(), r.value("state").toString() == "eval_passed" ? tr("EVALUATION PASSED") : tr("EVALUATION FAILED"));
     for (const char *s : {"train", "val", "test", "regression"}) {
         const QJsonObject m = r.value("results").toObject().value(s).toObject();
-        t += QString("%1: accuracy %2%  macro-F1 %3  loss %4  | majority class %5%  rule baseline %6%  (n=%7)\n")
-                 .arg(QString(s), -10).arg(m.value("accuracy").toDouble() * 100, 0, 'f', 1).arg(m.value("macro_f1").toDouble(), 0, 'f', 3)
-                 .arg(m.value("loss").toDouble(), 0, 'f', 4).arg(m.value("majority_rate").toDouble() * 100, 0, 'f', 1)
-                 .arg(m.value("baseline_accuracy").toDouble() * 100, 0, 'f', 1).arg(m.value("n").toInt());
+        t += QString("%1: accuracy %2  macro-F1 %3  loss %4  | majority class %5  rule baseline %6  (n=%7)\n")
+                 .arg(QString(s), -10).arg(pct(m.value("accuracy").toDouble())).arg(m.value("macro_f1").toDouble(), 0, 'f', 3)
+                 .arg(m.value("loss").toDouble(), 0, 'f', 4).arg(pct(m.value("majority_rate").toDouble()))
+                 .arg(pct(m.value("baseline_accuracy").toDouble())).arg(m.value("n").toInt());
     }
     t += tr("\nAcceptance checks:\n");
     for (const auto &c : r.value("verdict").toObject().value("checks").toArray()) {
@@ -507,11 +603,12 @@ void ModelLabDialog::showEvaluation(const QJsonObject &r) {
     m_stateLabel->setText(stateText(r.value("state").toString(), false));
 }
 
-void ModelLabDialog::expandSelected() {
-    if (m_phase != Phase::Ready || selectedModelId().isEmpty()) return;
+void ModelLabDialog::expandModel() {
+    if (m_phase != Phase::Ready || m_activeId.isEmpty()) return;
+    if (!m_confirm(tr("Expand the model"), tr("Expansion replaces the current model with a larger one that starts from its weights; the smaller "
+                                              "model's files are deleted. The larger model must be trained before it is any better. Continue?"))) return;
     setPhase(Phase::Busy, tr("Expanding..."));
-    m_client->call("expand", {{"model_id", selectedModelId()}, {"target_parameters", m_target->value()}}, this,
-                   [this](const QString &st, const QJsonObject &r) {
+    m_client->call("expand_active", {{"target_parameters", m_target->value()}}, this, [this](const QString &st, const QJsonObject &r) {
         setPhase(Phase::Ready);
         if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
         const QJsonObject rep = r.value("report").toObject();
@@ -519,37 +616,34 @@ void ModelLabDialog::expandSelected() {
         QString g;
         const QJsonObject growth = rep.value("growth").toObject();
         for (auto it = growth.begin(); it != growth.end(); ++it) g += QString("%1 %2->%3  ").arg(it.key()).arg(it.value().toArray().at(0).toInt()).arg(it.value().toArray().at(1).toInt());
-        m_eval->setPlainText(tr("Expanded into a NEW checkpoint (the source is untouched).\nParameters %1 -> %2\nGrowth: %3\n"
+        m_eval->setPlainText(tr("Expanded. The current model is now the larger one.\nParameters %1 -> %2\nGrowth: %3\n"
                                 "Function-preserving by design: %4 (%5)\nMeasured on random inputs: max |logit diff| = %6, top-1 agreement = %7\n"
-                                "Optimizer: %8\n\nExpansion adds capacity, not knowledge. Train and evaluate the new model before using it.")
+                                "Optimizer: %8\n\nExpansion adds capacity, not knowledge. Train it before relying on it.")
                                  .arg(qint64(rep.value("old_params").toDouble())).arg(qint64(rep.value("new_params").toDouble())).arg(g)
                                  .arg(rep.value("expected_function_preserving").toBool() ? tr("yes") : tr("no"), rep.value("preservation_note").toString())
                                  .arg(meas.value("max_abs_logit_diff").toDouble(), 0, 'g', 3).arg(meas.value("top1_agreement").toDouble(), 0, 'f', 3)
                                  .arg(rep.value("optimizer").toString()));
-        m_status->setText(tr("Expanded model created; it needs training before it can be accepted."));
+        m_status->setText(tr("Expanded; it needs training before it is any better."));
         refresh();
     }, 600000);
 }
 
-void ModelLabDialog::promoteSelected() {
-    const QJsonObject m = selectedModel();
-    if (m_phase != Phase::Ready || m.value("state").toString() != "eval_passed") return;
-    if (QMessageBox::question(this, tr("Promote to production"),
-                              tr("Promote \"%1 v%2\" to the production model?\n\nThe current production model stays available for rollback.")
-                                  .arg(m.value("name").toString()).arg(m.value("version").toInt())) != QMessageBox::Yes) return;
-    m_client->call("promote", {{"model_id", m.value("id").toString()}, {"approved", true}}, this, [this](const QString &st, const QJsonObject &r) {
+void ModelLabDialog::acceptCandidate() {
+    const QJsonObject cand = modelById(m_candidateId);
+    if (m_phase != Phase::Ready || cand.value("state").toString() != "eval_passed") return;
+    if (!m_confirm(tr("Replace the model"), tr("Replace the current model with the trained candidate? The current model's files are deleted."))) return;
+    m_client->call("accept_candidate", {}, this, [this](const QString &st, const QJsonObject &r) {
         if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
-        m_status->setText(tr("Model promoted to production."));
+        m_status->setText(tr("The candidate is now your model; the previous model was deleted."));
         refresh();
     });
 }
 
-void ModelLabDialog::rollback() {
-    if (m_phase != Phase::Ready) return;
-    if (!m_confirm(tr("Roll back"), tr("Restore the previous production model?"))) return;
-    m_client->call("rollback", {}, this, [this](const QString &st, const QJsonObject &r) {
+void ModelLabDialog::rejectCandidate() {
+    if (m_phase != Phase::Ready || m_candidateId.isEmpty()) return;
+    m_client->call("reject_candidate", {}, this, [this](const QString &st, const QJsonObject &r) {
         if (st != "success") { showError(r.value("code").toString(), r.value("message").toString()); return; }
-        m_status->setText(tr("Rolled back to the previous production model."));
+        m_status->setText(tr("Candidate discarded; your model is unchanged."));
         refresh();
     });
 }

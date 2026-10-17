@@ -204,7 +204,8 @@ def test_estimates_scale_and_big_models_are_refused_on_this_class_of_machine():
         assert memory.check_budget(est["total"], available=4 * GB, confirmed=True).verdict == "refuse"
 
 
-def test_system_memory_and_peak_are_real_numbers():
+def test_system_memory_and_peak_are_real_numbers(monkeypatch):
+    monkeypatch.delenv("MODEL_LAB_TEST_AVAILABLE_GB")                  # this one measures the real machine
     m = memory.system_memory()
     assert m["total"] > 0 and 0 < m["available"] <= m["total"]
     assert memory.peak_rss() >= memory.current_rss() > 10_000_000

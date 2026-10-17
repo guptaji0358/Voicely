@@ -35,3 +35,10 @@ def predict(text: str) -> str:
     if any(w.lower() in HETERONYMS for w in _WORD.findall(text)):
         return "heteronym"
     return "plain"
+
+
+def predict_for(task: str, text: str) -> str:
+    """Rule baseline for a task. needs_review: the app's own pre-synthesis rules flag anything that is not plain text."""
+    if task == "needs_review":
+        return "no" if predict(text) == "plain" else "yes"
+    return predict(text)

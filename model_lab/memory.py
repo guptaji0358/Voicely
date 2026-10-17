@@ -14,7 +14,21 @@ RUNTIME_OVERHEAD = int(0.30 * GB)        # interpreter + torch + allocator slack
 
 
 def system_memory() -> dict:
-    """{'total','available'} in bytes (Windows: GlobalMemoryStatusEx, Linux: /proc/meminfo)."""
+    """{'total','available'} in bytes (Windows: GlobalMemoryStatusEx, Linux: /proc/meminfo).
+
+    MODEL_LAB_TEST_AVAILABLE_GB (a number) REPLACES the reported available memory. It exists only so the test suite is
+    deterministic instead of depending on what else is running on the machine; do not set it in normal use, because it
+    defeats the guard.
+    """
+    real = _system_memory()
+    try:
+        forced = float(os.environ.get("MODEL_LAB_TEST_AVAILABLE_GB", ""))
+    except ValueError:
+        return real
+    return {"total": max(real["total"], int(forced * GB)), "available": int(forced * GB)}
+
+
+def _system_memory() -> dict:
     if platform.system() == "Windows":
         class MS(ctypes.Structure):
             _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong), ("ullTotalPhys", ctypes.c_ulonglong),

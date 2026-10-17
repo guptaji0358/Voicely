@@ -124,7 +124,25 @@ class QA:
                                    "thresholds": asdict(th)})
         doc["summary"] = summary
         self.save_results(s, doc)
+        self._record_experience(s, which, results)
         return summary
+
+    @staticmethod
+    def _record_experience(s: Session, which: str, results: list[ChunkResult]) -> None:
+        """Opt-in: hand the outcome of checking the ORIGINAL audio to the experience store (see experience.py for the rules)."""
+        try:
+            from .experience import ExperienceStore
+            store = ExperienceStore()
+            if not store.enabled or which not in ("accepted", "original"):
+                return
+            for r in results:
+                if r.version != "g0":                      # only the original synthesis, never a repaired version
+                    continue
+                store.label_from_recheck(s.m["session_id"], r.chunk, r.status, bool((r.asr or {}).get("mocked")),
+                                         [i.type for i in r.issues], recogniser_error=bool(r.error))
+        except Exception as exc:                           # learning must never break a recheck
+            import sys
+            print(f"[qa] experience labelling skipped: {exc}", file=sys.stderr, flush=True)
 
     def _verify(self, s: Session, i: int, vid: str, asr, th, cancel) -> ChunkResult:
         c = s.chunks[i]

@@ -46,7 +46,7 @@ set_tests_properties(tst_ui_hidpi PROPERTIES TIMEOUT 120
 # Python backend tests (speech_engine/*) as part of the same ctest run
 if(Python3_EXECUTABLE)
   add_test(NAME pytest_backend COMMAND ${Python3_EXECUTABLE} -m pytest -q WORKING_DIRECTORY "${TTS_ENGINE_ROOT}")
-  set_tests_properties(pytest_backend PROPERTIES TIMEOUT 900)
+  set_tests_properties(pytest_backend PROPERTIES TIMEOUT 1800)
 endif()
 
 # ---- deployment helper: cmake --build . --target deploy ----------------------

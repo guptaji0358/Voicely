@@ -17,6 +17,7 @@ def isolated_data_dir(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setenv("SPEECH_ENGINE_DATA_DIR", str(d))
     monkeypatch.setenv("SPEECH_ENGINE_ALLOW_MOCK", "1")
+    monkeypatch.setenv("MODEL_LAB_TEST_AVAILABLE_GB", "6")      # Model Lab tests must not depend on what else is running
     return d
 
 

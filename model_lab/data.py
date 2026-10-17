@@ -29,6 +29,8 @@ SPLITS = ("train", "val", "test", "regression")
 MAX_TEXT = 400
 SEP = " => "
 IGNORE = -100
+TASK_TAGS = {"review_category": "C|", "needs_review": "R|"}     # first characters of the prompt: which question is being asked
+NEEDS_REVIEW_LABELS = ["no", "yes"]
 
 
 class DatasetError(Exception):
@@ -127,7 +129,8 @@ def build_dataset(root: Path, name: str, records: list[dict], labels: list[str],
             _write_jsonl(tmp / f"{s}.jsonl", splits[s])
             files[f"{s}.jsonl"] = hashlib.sha256((tmp / f"{s}.jsonl").read_bytes()).hexdigest()
         content_hash = _h("".join(files[k] for k in sorted(files)))[:8]
-        seq = 1 + len([p for p in base.iterdir() if p.is_dir() and p.name.startswith("v")])
+        nums = [int(p.name[1:5]) for p in base.iterdir() if p.is_dir() and re.match(r"v\d{4}-", p.name)]
+        seq = 1 + max(nums, default=0)                 # highest existing + 1: pruning old versions must never reuse a number
         version = f"v{seq:04d}-{content_hash}"
         dist = {s: {l: sum(1 for r in splits[s] if r["target"] == l) for l in labels} for s in SPLITS}
         manifest = {"schema": 1, "name": name, "version": version, "task": task, "labels": labels, "seed": seed,
@@ -224,10 +227,28 @@ def import_feedback_records(fb_records: list[dict], labels: list[str], task: str
     return used, skipped
 
 
+def import_experience_records(recs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """User generations that were labelled by Recheck Speech (speech_engine.experience) -> ``needs_review`` records.
+
+    label yes = the recheck found something to review or failed; no = every automated check passed. These labels come from an
+    independent recogniser, not from this model, and are imperfect; records say so in ``label_source``.
+    """
+    used, skipped = [], []
+    for r in recs:
+        if r.get("label") not in NEEDS_REVIEW_LABELS:
+            skipped.append({"id": r.get("id"), "reason": "no recheck label yet"})
+        elif not isinstance(r.get("text"), str) or len(r["text"]) > MAX_TEXT:
+            skipped.append({"id": r.get("id"), "reason": f"text longer than the {MAX_TEXT}-character context"})
+        else:
+            used.append({"text": r["text"], "target": r["label"], "language": r.get("language", ""), "source": "experience",
+                         "label_source": r.get("label_source", ""), "task": "needs_review", "created": r.get("created", 0)})
+    return used, skipped
+
+
 # --------------------------------------------------------------------------- tokenised, memory-mapped training arrays
 def encode_example(tok: Tokenizer, r: dict) -> tuple[list[int], int]:
     """ids = BOS text SEP label EOS ; returns (ids, prompt_len) where ids[prompt_len:] is what the model must produce."""
-    prompt = tok.encode(r["text"], bos=True) + tok.encode(SEP)
+    prompt = tok.encode(TASK_TAGS.get(r.get("task", ""), "") + r["text"], bos=True) + tok.encode(SEP)
     return prompt + tok.encode(r["target"]) + [EOS], len(prompt)
 
 
@@ -259,11 +280,16 @@ class TokenSet:
     def __len__(self) -> int:
         return int(self.tokens.shape[0])
 
+    def longest(self) -> int:
+        """Longest real (unpadded) row; batches are trimmed to their own longest row so padding costs nothing."""
+        return int((np.asarray(self.tokens) != PAD).sum(axis=1).max()) if len(self) else 0
+
     def batch(self, idx, label_only: bool = True):
         """x, y (next-token targets) as int64 arrays. y is IGNORE where it should not count (padding, and the prompt if label_only)."""
         import torch
         rows = np.asarray(self.tokens[np.sort(idx)], dtype=np.int64)
         pl = np.asarray(self.plen[np.sort(idx)], dtype=np.int64)
+        rows = rows[:, :max(2, int((rows != PAD).sum(axis=1).max()))]          # drop columns that are padding for the whole batch
         x, y = rows[:, :-1].copy(), rows[:, 1:].copy()
         y[rows[:, 1:] == PAD] = IGNORE
         if label_only:

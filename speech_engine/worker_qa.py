@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import wave
 
 from .exceptions import (BackendUnavailableError, InvalidInputError, SpeechEngineError)
@@ -55,6 +56,11 @@ class QAMixin:
                            SynthParams(speed=req.get("speed"), style=req.get("style") or None), language,
                            qa.dictionary if req.get("dictionary", True) else None, cancel, on_progress,
                            qa.versions(backend.name))
+        try:                                   # opt-in learning record; it must never be able to break a generation
+            from .experience import ExperienceStore
+            ExperienceStore().add_generation(s.m["session_id"], s.chunks, language, profile.name, backend.name)
+        except Exception as exc:
+            print(f"[worker] experience capture skipped: {exc}", file=sys.stderr, flush=True)
         orig = s.assemble("original", cancel=cancel)
         tmp = out.with_name(f".{out.name}.{os.getpid()}.part")
         try:
