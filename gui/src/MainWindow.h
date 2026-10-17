@@ -1,5 +1,6 @@
 #pragma once
 #include <QAudioBuffer>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
 #include <QMainWindow>
@@ -15,6 +16,11 @@ class WaveformWidget;
 class SuccessBadge;
 class SmoothProgressBar;
 class EmptyState;
+class ShellWidget;
+class TitleBar;
+class QaPanel;
+class Card;
+class AnimatedButton;
 class QAudioBufferOutput;
 class QAudioOutput;
 class QCheckBox;
@@ -36,18 +42,30 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
-    enum class State { Starting, Idle, Generating, Exporting, Unavailable };
+    enum class State { Starting, Idle, Generating, Exporting, Unavailable, Rechecking, Repairing };
     State state() const { return m_state; }
     QString lastAudioPath() const { return m_audioPath; }
+    QString sessionDir() const { return m_sessionDir; }
+    bool customFrame() const;
+    bool preCheckEnabled() const;
+    void setPreCheckEnabled(bool on);       // "check pronunciation before generating"
 
 public slots:
     void startWorker();
     void generate(bool testVoice = false);   // testVoice: short preview of the selected voice (does not touch the main audio)
     void cancelJob();
     void exportAudio(const QString &path, const QString &format);   // used by the Save buttons and tests
+    void analyzeText(bool thenGenerate);
+    void recheckSpeech();
+    void runRepair(const QString &mode, const QJsonArray &chunks, const QJsonArray &candidates);
+    void acceptRepair();
+    void discardRepair();
+    void openDictionary();
 
 protected:
     void closeEvent(QCloseEvent *e) override;
+    void changeEvent(QEvent *e) override;
+    void showEvent(QShowEvent *e) override;
     bool eventFilter(QObject *obj, QEvent *e) override;
 
 private slots:
@@ -64,9 +82,12 @@ private slots:
     void updateCounts();
     void backendChanged();
     void onPreviewClicked();
+    void onGenerateClicked();
 
 private:
+    enum class Job { None, Synth, Preview, Export, Recheck, Repair };
     void buildUi();
+    void buildActions();
     void setState(State s);
     void setStatus(const QString &text, bool error = false);
     void log(const QString &line);
@@ -77,27 +98,47 @@ private:
     void updatePreviewUi();
     void updateAudioPanel();
     void updateHeaderIcon();
+    void updateVersionBar();
     void onAudioBuffer(const QAudioBuffer &buf);
     void tickWave();
     void refreshHealth();
+    void applyHealth(const QJsonObject &r);
+    void onCorrect(const QJsonObject &issue);
+    void onReplay(int chunk);
+    void onSaveFeedback(const QJsonObject &attempt);
+    void showReview(const QJsonObject &analysis, bool thenGenerate);
+    void removeSession();
+    QString currentLanguage() const;
+    QJsonObject qaThresholds() const;      // optional advanced override (setting "qaThresholds" = JSON object)
+    bool backendHasIpa() const;
     QProcessEnvironment workerEnv() const;
     void purgeStale();
-    QStringList m_stale;
+    QStringList m_stale, m_staleDirs;
 
     ProtocolClient *m_client;
     State m_state = State::Starting;
+    Job m_job = Job::None;
     QString m_jobId, m_healthId, m_capsId, m_audioPath, m_previewPath, m_tempDir, m_exportTarget;
+    QString m_sessionDir, m_candidatePath, m_acceptedPath, m_ackHash;
     QTemporaryDir *m_tmp = nullptr;
     bool m_jobIsTest = false;
     bool m_statusError = false;
-    int m_genCounter = 0;
-    QJsonObject m_caps, m_health;
+    bool m_analyzing = false;
+    int m_genCounter = 0, m_analysisSeq = 0;
+    QJsonObject m_caps, m_health, m_repairResult;
     QString m_sessionApiKey;
 
+    ShellWidget *m_shell;
+    TitleBar *m_titleBar;
+    QaPanel *m_qa;
+    QList<Card *> m_cards;
+    bool m_entrancePlayed = false;
     StateIcon *m_dot, *m_busy;
-    QLabel *m_title, *m_status, *m_counts, *m_outLabel, *m_time, *m_voiceNote;
+    QLabel *m_title, *m_status, *m_counts, *m_outLabel, *m_time, *m_voiceNote, *m_textBadge;
     QPushButton *m_settingsBtn, *m_import, *m_clear, *m_paste, *m_generate, *m_play, *m_stop,
-        *m_saveMp3, *m_saveWav, *m_cancel;
+        *m_saveMp3, *m_saveWav, *m_cancel, *m_checkText, *m_verOriginal, *m_verRepaired;
+    QCheckBox *m_precheck;
+    QWidget *m_versionBar;
     PreviewButton *m_preview;
     QPlainTextEdit *m_text, *m_log;
     QComboBox *m_voice, *m_backend, *m_lang, *m_bitrate;
@@ -118,4 +159,5 @@ private:
     QList<QPair<qint64, float>> m_levels;   // (media time in us, level 0..1) decoded ahead of playback
     qint64 m_levelCursor = 0;
     bool m_seeking = false;
+    QList<QAction *> m_actions;
 };

@@ -50,6 +50,8 @@ class SynthParams:
     speed: float | None = None      # overrides profile speed where supported
     style: str | None = None        # overrides profile style where supported (google)
     timeout: float = 60.0
+    # (written word, IPA) pairs the backend should pronounce exactly; ignored unless ``supports_ipa``.
+    overrides: tuple = ()
 
 
 class Backend(ABC):
@@ -57,6 +59,12 @@ class Backend(ABC):
     requires_network = False
     native_sample_rate = 24000
     max_chunk_chars = 400
+    supports_ipa = False            # can take IPA/phoneme overrides for individual words
+    supports_respelling = True      # text respellings are read as ordinary text by every backend
+
+    def ipa_vocabulary(self) -> set[str] | None:
+        """Characters this backend can pronounce when given IPA (None = unknown / IPA unsupported)."""
+        return None
 
     @abstractmethod
     def status(self) -> BackendStatus:

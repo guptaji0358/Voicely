@@ -125,7 +125,7 @@ Python is found via Settings > `TTS_PYTHON` > `<app>/python/python.exe` > PATH; 
 Google backend untested (no API key here; only its "unavailable" error path is tested). Non-English languages use English-blend voices (accent). Only WAV/MP3 export. Qt Multimedia FFmpeg backend. The packaging steps above are a plan, not verified.
 
 ## Desktop GUI (`gui/`)
-Qt 6 Widgets app (C++) talking to the Python worker over the JSON-lines protocol (`docs/PROTOCOL.md`).
+Qt 6 Widgets app (C++) talking to the Python worker over the JSON-lines protocol (`docs/PROTOCOL.md`, versions 1 and 2).
 
 ```
 gui/assets/styles/    dark.qss, light.qss (colour tokens) + components.qss (rules, layout tokens)
@@ -139,12 +139,34 @@ gui/src/ui/           ThemeManager, Icons, Buttons (animated hover/press, Previe
 * **Waveform** is driven by real decoded samples from `QAudioBufferOutput`; it stays still if none arrive.
 * **Voice preview** is the speaker button inside the voice row; it uses its own player so the generated audio is not replaced.
 
-Build / run / test (Windows, MinGW Qt 6.11 used here; needs Qt Widgets, Multimedia, Svg, Test):
+### Pronunciation QA, dictionary and LLM assistance
+Workflow: import/enter text -> *Check pronunciation* (pre-analysis, optional) -> choose voice -> *Generate Speech* -> listen -> *Recheck Speech*
+(optional) -> inspect suspected problems (intended vs recognised text, replay) -> *Correct…* / *Repair* / *Auto-repair* -> listen to the repaired
+version, *Accept* or keep the original -> recheck -> save MP3/WAV. Details and honest limits: `docs/PRONUNCIATION_QA.md`.
+AI suggestions and learning from corrections (off by default, consent-gated, nothing trained automatically): `docs/LEARNING.md`.
+Recheck Speech needs `pip install faster-whisper` plus a recognition model (Settings > Pronunciation > Download, asks first).
+
+### Window, layout and effects
+Custom title bar (`Qt::FramelessWindowHint`; moving/resizing/snapping are done by the OS via `startSystemMove/startSystemResize`), floating cards
+with painted layered shadows over a subtle perspective backdrop, staggered entrance fades, animated hover/press, waveform from real decoded
+samples. It is a genuine native widget app; depth is created with layered 2D painting (no 3D engine). Fallback: Settings > "Use the standard Windows
+title bar" or `TTS_NATIVE_FRAME=1`. Reduced motion: Settings or `TTS_REDUCE_MOTION=1` (also follows the Windows animation setting).
+Not done: Windows 11 Snap Layouts flyout on the maximize button (needs `WM_NCHITTEST` handling) and Alt+Space system menu.
+
+### Build / run / test (Windows, MinGW Qt 6.11; needs Qt Widgets, Multimedia, Svg, Test)
 ```bash
 cd gui && cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.11.1/mingw_64 -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-cmake --build build --target deploy      # windeployqt
 build/TTSStudio.exe
-ctest --test-dir build --output-on-failure   # set QT_PLUGIN_PATH=<Qt>/plugins if the offscreen platform plugin is not found
-python -m pytest                          # backend tests (from the repo root)
+ctest --test-dir build --output-on-failure        # Qt tests (offscreen) + pytest backend tests
 ```
+Developer aid: `TTS_SNAPSHOT=file.png TTSStudio.exe` renders the window and exits (`TTS_TEST_SNAPSHOT_DIR` does the same inside `tst_qa_gui`).
+
+### Standalone folder (tested)
+```bash
+python packaging/make_dist.py --build gui/build --qt D:/Apps/Qt6/6.11.1/mingw_64 --verify [--with-google] [--with-asr] [--no-scipy]
+```
+Creates `dist/TTSStudio/` (TTSStudio.exe + Qt via windeployqt, `engine/`, and a private `python/` runtime containing only the dependency closure of
+kokoro-onnx, lameenc, numpy, scipy). PyTorch, sounddevice, pytest and models are not included; Kokoro and the ASR model are fetched on request.
+`--verify` runs `packaging/verify_dist.py` in a clean environment (no system Python/Qt on PATH): runtime imports, worker protocol 2 actions, real local
+synthesis if the Kokoro model exists, MP3 export, and a real launch of the exe. Not done: an installer (Inno Setup/NSIS/WiX) and code signing.

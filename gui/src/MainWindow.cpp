@@ -3,35 +3,50 @@
 #include "Config.h"
 #include "ProtocolClient.h"
 #include "ui/Buttons.h"
+#include "ui/Card.h"
+#include "ui/DictionaryDialog.h"
+#include "ui/Frameless.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
 #include "ui/Motion.h"
+#include "ui/PronSettings.h"
+#include "ui/QaPanel.h"
+#include "ui/ReviewDialog.h"
 #include "ui/ThemeManager.h"
 
+#include <QAction>
 #include <QAudioBufferOutput>
 #include <QAudioOutput>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMediaPlayer>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QRegularExpression>
+#include <QScreen>
+#include <QScrollArea>
 #include <QSlider>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QStringDecoder>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -50,21 +65,13 @@ QLabel *fieldLabel(const QString &text) {
     return l;
 }
 
-QFrame *card() {
-    auto *f = new QFrame;
-    f->setObjectName("card");
-    return f;
-}
-
 // Label + field packed together so the pair can be shown/hidden as one unit.
-QWidget *group(const QString &label, QWidget *field, QLabel **labelOut = nullptr) {
+QWidget *group(const QString &label, QWidget *field) {
     auto *w = new QWidget;
     auto *h = new QHBoxLayout(w);
     h->setContentsMargins(0, 0, 0, 0);
-    h->setSpacing(8);
-    auto *l = fieldLabel(label);
-    if (labelOut) *labelOut = l;
-    h->addWidget(l);
+    h->setSpacing(6);
+    h->addWidget(fieldLabel(label));
     h->addWidget(field, 1);
     return w;
 }
@@ -76,9 +83,21 @@ AnimatedButton *button(const QString &text, const QString &icon, const char *nam
     return b;
 }
 
+QString hashOf(const QString &t) {
+    return QString::fromLatin1(QCryptographicHash::hash(t.toUtf8(), QCryptographicHash::Sha1).toHex());
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new ProtocolClient(this)) {
+    const bool custom = Frameless::customFrameWanted();
+    if (custom) {
+        // Frameless + translucent: the shell paints the rounded, shadowed window. The extra hints keep the taskbar
+        // minimise/restore behaviour, Win+Arrow snapping and the system menu working.
+        setWindowFlags(Qt::Window | Qt::FramelessWindowHint | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint |
+                       Qt::WindowCloseButtonHint | Qt::WindowSystemMenuHint);
+        setAttribute(Qt::WA_TranslucentBackground);
+    }
     m_tmp = new QTemporaryDir;     // unique per window; removed on exit
     m_tempDir = m_tmp->path();
     // The main player must be the first QMediaPlayer child (tests look it up with findChild).
@@ -154,81 +173,202 @@ MainWindow::~MainWindow() {
     delete m_tmp;
 }
 
+bool MainWindow::customFrame() const { return m_shell && m_shell->customFrame(); }
+bool MainWindow::preCheckEnabled() const { return m_precheck->isChecked(); }
+void MainWindow::setPreCheckEnabled(bool on) { m_precheck->setChecked(on); }
+
 // The media backend may still hold a file for a moment after setSource({}); retry removal later.
 void MainWindow::purgeStale() {
     for (int i = m_stale.size() - 1; i >= 0; --i)
         if (!QFile::exists(m_stale[i]) || QFile::remove(m_stale[i])) m_stale.removeAt(i);
-    if (!m_stale.isEmpty()) QTimer::singleShot(300, this, &MainWindow::purgeStale);
+    for (int i = m_staleDirs.size() - 1; i >= 0; --i)
+        if (!QDir(m_staleDirs[i]).exists() || QDir(m_staleDirs[i]).removeRecursively()) m_staleDirs.removeAt(i);
+    if (!m_stale.isEmpty() || !m_staleDirs.isEmpty()) QTimer::singleShot(300, this, &MainWindow::purgeStale);
+}
+
+void MainWindow::removeSession() {
+    if (!m_sessionDir.isEmpty()) m_staleDirs << m_sessionDir;
+    m_sessionDir.clear();
+    m_candidatePath.clear();
+    m_acceptedPath.clear();
+    m_repairResult = {};
+}
+
+void MainWindow::buildActions() {
+    auto mk = [this](const QString &text, const char *icon, const QKeySequence &key, auto slot) {
+        auto *a = new QAction(Icons::icon(icon), text, this);
+        if (!key.isEmpty()) a->setShortcut(key);
+        a->setShortcutContext(Qt::WindowShortcut);
+        connect(a, &QAction::triggered, this, slot);
+        addAction(a);
+        m_actions << a;
+        return a;
+    };
+    mk("Import text…", "import", QKeySequence::Open, [this] { importText(); });
+    mk("Check pronunciation", "pron-check", QKeySequence("Ctrl+Shift+P"), [this] { if (m_state == State::Idle) analyzeText(false); });
+    mk("Generate speech", "generate", QKeySequence("Ctrl+Return"), [this] { onGenerateClicked(); });
+    mk("Recheck speech", "recheck", QKeySequence("Ctrl+R"), [this] { recheckSpeech(); });
+    mk("Pronunciation dictionary…", "dictionary", QKeySequence("Ctrl+D"), [this] { openDictionary(); });
+    mk("Save as MP3…", "save-mp3", QKeySequence::Save, [this] { saveMp3(); });
+    mk("Settings…", "settings", QKeySequence("Ctrl+,"), [this] { openSettings(); });
+    mk("Re-check backend", "recheck", QKeySequence(), [this] { startWorker(); });
+    auto *sep = new QAction(this);
+    sep->setSeparator(true);
+    m_actions << sep;
+    mk("Exit", "window-close", QKeySequence::Quit, [this] { close(); });
 }
 
 void MainWindow::buildUi() {
     ThemeManager::instance().ensureApplied();
     setWindowTitle("TTS Studio");
     setWindowIcon(Icons::icon("app-logo"));
-    resize(980, 720);
-    setMinimumSize(700, 560);
-    auto *central = new QWidget;
-    central->setObjectName("central");
-    setCentralWidget(central);
-    auto *root = new QVBoxLayout(central);
-    root->setContentsMargins(14, 10, 14, 10);
-    root->setSpacing(10);
+    const bool custom = windowFlags().testFlag(Qt::FramelessWindowHint);
+    setMinimumSize(custom ? 980 : 940, custom ? 700 : 660);
+    m_shell = new ShellWidget(custom);
+    setCentralWidget(m_shell);
+    auto *outer = new QVBoxLayout(m_shell);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
 
-    // ---- header
-    auto *head = new QHBoxLayout;
-    head->setSpacing(8);
-    m_title = new QLabel("TTS Studio");
-    m_title->setObjectName("title");
-    m_dot = new StateIcon(18);
-    m_dot->setObjectName("statusDot");
-    m_status = new QLabel("Starting speech engine…");
-    m_status->setObjectName("statusLabel");
-    m_status->setWordWrap(true);
-    m_settingsBtn = button("Settings", "settings", "settingsButton");
-    head->addWidget(new IconWidget("app-logo", "", 28));
-    head->addWidget(m_title);
-    head->addSpacing(12);
-    head->addWidget(m_dot);
-    head->addWidget(m_status, 1);
-    head->addWidget(m_settingsBtn);
-    root->addLayout(head);
+    m_titleBar = new TitleBar;
+    m_titleBar->setVisible(custom);
+    outer->addWidget(m_titleBar);
 
-    // ---- text editor (gets the most room)
-    auto *tb = card();
-    auto *tl = new QVBoxLayout(tb);
-    tl->setContentsMargins(10, 10, 10, 8);
-    tl->setSpacing(8);
+    auto *body = new QVBoxLayout;
+    body->setContentsMargins(8, 0, 8, 8);
+    body->setSpacing(2);
+    outer->addLayout(body, 1);
+    auto *cols = new QHBoxLayout;
+    cols->setSpacing(0);
+    body->addLayout(cols, 1);
+
+    auto newCard = [this](int top = 12, int bottom = 12) {
+        auto *c = new Card;
+        m_cards << c;
+        auto *l = new QVBoxLayout(c);
+        l->setContentsMargins(12, top - 4, 12, bottom - 4);
+        l->setSpacing(8);
+        return c;
+    };
+
+    // ============================================================ left column: text workspace + audio
+    auto *left = new QVBoxLayout;
+    left->setSpacing(0);
+    cols->addLayout(left, 1);
+
+    auto *tb = newCard();
+    auto *tl = static_cast<QVBoxLayout *>(tb->layout());
     m_text = new QPlainTextEdit;
     m_text->setObjectName("textEditor");
-    m_text->setMinimumHeight(140);
-    m_inputEmpty = new EmptyState("empty-input", "Nothing to read yet",
-                                  "Type, paste or import text to begin.", false, m_text->viewport());
+    m_text->setMinimumHeight(150);
+    m_inputEmpty = new EmptyState("empty-input", "Nothing to read yet", "Type, paste or import text to begin.", false, m_text->viewport());
     m_inputEmpty->setGeometry(m_text->viewport()->rect());
     m_text->viewport()->installEventFilter(this);
     auto *tr = new QHBoxLayout;
     tr->setSpacing(6);
-    m_import = button("Import Text…", "import", "importButton");
+    m_import = button("Import…", "import", "importButton");
     m_paste = button("Paste", "paste", "pasteButton");
-    m_clear = button("Clear Text", "clear", "clearButton");
+    m_clear = button("Clear", "clear", "clearButton");
+    m_checkText = button("Check", "pron-check", "checkTextButton");
+    m_checkText->setToolTip("Find names, numbers, acronyms and ambiguous words that may be mispronounced (the text is not changed)");
+    m_textBadge = new QLabel;
+    m_textBadge->setObjectName("qaNote");
     m_counts = new QLabel("0 characters · 0 words");
+    m_counts->setToolTip("Characters and words in the text");
     m_counts->setObjectName("muted");
     tr->addWidget(m_import);
     tr->addWidget(m_paste);
     tr->addWidget(m_clear);
+    tr->addWidget(m_checkText);
+    tr->addWidget(m_textBadge);
     tr->addStretch(1);
     tr->addWidget(m_counts);
     tl->addWidget(m_text, 1);
     tl->addLayout(tr);
-    root->addWidget(tb, 1);
+    left->addWidget(tb, 1);
 
-    // ---- voice settings: one compact row, preview speaker inline with the voice selector
-    auto *vb = card();
-    auto *vl = new QVBoxLayout(vb);
-    vl->setContentsMargins(12, 10, 12, 10);
-    vl->setSpacing(8);
+    auto *ab = newCard();
+    auto *al = static_cast<QVBoxLayout *>(ab->layout());
+    m_audioStack = new QStackedWidget;
+    m_audioStack->setObjectName("audioStack");
+    m_audioStack->setFixedHeight(64);
+    m_audioStack->addWidget(new EmptyState("empty-audio", "No audio yet", "Generate speech to preview it here.", true));
+    m_wave = new WaveformWidget;
+    m_audioStack->addWidget(m_wave);
+    al->addWidget(m_audioStack);
+
+    auto *a2 = new QHBoxLayout;
+    a2->setSpacing(6);
+    m_play = button("Play", "play", "playButton");
+    m_stop = button("Stop", "stop", "stopButton");
+    m_stop->setEnabled(false);
+    m_seek = new QSlider(Qt::Horizontal);
+    m_seek->setObjectName("seekSlider");
+    m_time = new QLabel("0:00 / 0:00");
+    m_time->setObjectName("timeLabel");
+    a2->addWidget(m_play);
+    a2->addWidget(m_stop);
+    a2->addWidget(m_seek, 1);
+    a2->addWidget(m_time);
+    al->addLayout(a2);
+
+    m_versionBar = new QWidget;
+    auto *vb = new QHBoxLayout(m_versionBar);
+    vb->setContentsMargins(0, 0, 0, 0);
+    vb->setSpacing(6);
+    m_verOriginal = button("Original", "", "versionOriginal");
+    m_verRepaired = button("Repaired (not accepted yet)", "repair", "versionRepaired");
+    for (auto *b : {m_verOriginal, m_verRepaired}) b->setCheckable(true);
+    m_verOriginal->setChecked(true);
+    vb->addWidget(fieldLabel("Listen to:"));
+    vb->addWidget(m_verOriginal);
+    vb->addWidget(m_verRepaired);
+    vb->addStretch(1);
+    m_versionBar->hide();
+    al->addWidget(m_versionBar);
+
+    auto *a3 = new QHBoxLayout;
+    a3->setSpacing(6);
+    m_bitrate = new QComboBox;
+    m_bitrate->setObjectName("bitrateCombo");
+    for (int b : {128, 160, 192, 256, 320}) m_bitrate->addItem(QString("%1 kbps").arg(b), b);
+    m_bitrate->setCurrentIndex(2);
+    m_saveMp3 = button("Save as MP3…", "save-mp3", "saveMp3Button");
+    m_saveWav = button("Save WAV…", "export-wav", "saveWavButton");
+    m_success = new SuccessBadge;
+    a3->addWidget(fieldLabel("MP3"));
+    a3->addWidget(m_bitrate);
+    a3->addWidget(m_saveMp3);
+    a3->addWidget(m_saveWav);
+    a3->addWidget(m_success);
+    a3->addStretch(1);
+    al->addLayout(a3);
+    m_outLabel = new QLabel("No audio generated yet.");
+    m_outLabel->setObjectName("outputLabel");
+    m_outLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_outLabel->setWordWrap(true);
+    al->addWidget(m_outLabel);
+    left->addWidget(ab);
+
+    // ============================================================ right column: voice, generate, QA
+    auto *scroll = new QScrollArea;
+    scroll->setObjectName("rightScroll");
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setFixedWidth(390);
+    auto *rw = new QWidget;
+    auto *right = new QVBoxLayout(rw);
+    right->setContentsMargins(0, 0, 0, 0);
+    right->setSpacing(0);
+    scroll->setWidget(rw);
+    cols->addWidget(scroll);
+
+    auto *vc = newCard();
+    auto *vl = static_cast<QVBoxLayout *>(vc->layout());
     m_voice = new QComboBox;
     m_voice->setObjectName("voiceCombo");
-    m_voice->setMinimumWidth(180);
+    m_voice->setMinimumWidth(120);
     m_backend = new QComboBox;
     m_backend->setObjectName("backendCombo");
     m_lang = new QComboBox;
@@ -254,96 +394,73 @@ void MainWindow::buildUi() {
     r0->setSpacing(6);
     r0->addWidget(new IconWidget("voice", "icon-accent", 18));
     r0->addWidget(fieldLabel("Voice:"));
-    r0->addWidget(m_voice, 3);
+    r0->addWidget(m_voice, 1);
     r0->addWidget(m_preview);                 // speaker icon sits right beside the voice name
-    r0->addSpacing(18);
-    r0->addWidget(fieldLabel("Backend:"));
-    r0->addWidget(m_backend, 2);
     vl->addLayout(r0);
-
+    vl->addWidget(group("Backend:", m_backend));
     m_optRow = new QWidget;
-    auto *r1 = new QHBoxLayout(m_optRow);
+    auto *r1 = new QVBoxLayout(m_optRow);
     r1->setContentsMargins(0, 0, 0, 0);
-    r1->setSpacing(18);
+    r1->setSpacing(8);
+    auto *r1a = new QHBoxLayout;
+    r1a->setSpacing(12);
     m_langGroup = group("Language:", m_lang);
     m_speedGroup = group("Speed:", m_speed);
     m_styleGroup = group("Style:", m_style);
-    r1->addWidget(m_langGroup);
-    r1->addWidget(m_speedGroup);
-    r1->addWidget(m_styleGroup, 1);
+    r1a->addWidget(m_langGroup, 1);
+    r1a->addWidget(m_speedGroup);
+    r1->addLayout(r1a);
+    r1->addWidget(m_styleGroup);
     vl->addWidget(m_optRow);
     vl->addWidget(m_voiceNote);
-    root->addWidget(vb);
+    right->addWidget(vc);
 
-    // ---- audio
-    auto *ab = card();
-    auto *al = new QVBoxLayout(ab);
-    al->setContentsMargins(12, 10, 12, 10);
-    al->setSpacing(8);
-    auto *a1 = new QHBoxLayout;
-    a1->setSpacing(8);
+    auto *gc = newCard();
+    auto *gl = static_cast<QVBoxLayout *>(gc->layout());
+    auto *g1 = new QHBoxLayout;
+    g1->setSpacing(8);
     m_generate = button("Generate Speech", "generate", "primary", "on-accent");
     m_generate->setProperty("testId", "generate");
+    m_generate->setMinimumHeight(38);
     m_busy = new StateIcon(18);
     m_busy->setKind(StateIcon::Kind::Busy);
     m_busy->hide();
     m_cancel = button("Cancel", "cancel", "cancelButton");
     m_cancel->hide();
+    g1->addWidget(m_generate, 1);
+    g1->addWidget(m_busy);
+    g1->addWidget(m_cancel);
+    gl->addLayout(g1);
     m_progress = new SmoothProgressBar;
     m_progress->setObjectName("progressBar");
-    a1->addWidget(m_generate);
-    a1->addWidget(m_busy);
-    a1->addWidget(m_progress, 1);
-    a1->addWidget(m_cancel);
-    al->addLayout(a1);
+    gl->addWidget(m_progress);
+    m_precheck = new QCheckBox("Check pronunciation before generating");
+    m_precheck->setObjectName("precheckBox");
+    m_precheck->setChecked(Config::settings().value("precheck", true).toBool());
+    m_precheck->setToolTip("Analyses the text for names, numbers, acronyms and ambiguous words first; the text is never rewritten");
+    gl->addWidget(m_precheck);
+    right->addWidget(gc);
 
-    m_audioStack = new QStackedWidget;
-    m_audioStack->setObjectName("audioStack");
-    m_audioStack->setFixedHeight(72);
-    m_audioStack->addWidget(new EmptyState("empty-audio", "No audio yet", "Generate speech to preview it here.", true));
-    m_wave = new WaveformWidget;
-    m_audioStack->addWidget(m_wave);
-    al->addWidget(m_audioStack);
+    auto *qc = newCard();
+    auto *ql = static_cast<QVBoxLayout *>(qc->layout());
+    auto *qt = new QLabel("Pronunciation check");
+    qt->setObjectName("sectionTitle");
+    ql->addWidget(qt);
+    m_qa = new QaPanel;
+    ql->addWidget(m_qa, 1);
+    right->addWidget(qc, 1);
 
-    auto *a2 = new QHBoxLayout;
-    a2->setSpacing(6);
-    m_play = button("Play", "play", "playButton");
-    m_stop = button("Stop", "stop", "stopButton");
-    m_stop->setEnabled(false);
-    m_seek = new QSlider(Qt::Horizontal);
-    m_seek->setObjectName("seekSlider");
-    m_time = new QLabel("0:00 / 0:00");
-    m_time->setObjectName("timeLabel");
-    a2->addWidget(m_play);
-    a2->addWidget(m_stop);
-    a2->addWidget(m_seek, 1);
-    a2->addWidget(m_time);
-    al->addLayout(a2);
-
-    auto *a3 = new QHBoxLayout;
-    a3->setSpacing(6);
-    m_bitrate = new QComboBox;
-    m_bitrate->setObjectName("bitrateCombo");
-    for (int b : {128, 160, 192, 256, 320}) m_bitrate->addItem(QString("%1 kbps").arg(b), b);
-    m_bitrate->setCurrentIndex(2);
-    m_saveMp3 = button("Save as MP3…", "save-mp3", "saveMp3Button");
-    m_saveWav = button("Save WAV…", "export-wav", "saveWavButton");
-    m_success = new SuccessBadge;
-    m_outLabel = new QLabel("No audio generated yet.");
-    m_outLabel->setObjectName("outputLabel");
-    m_outLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_outLabel->setWordWrap(true);
-    a3->addWidget(fieldLabel("MP3 bitrate"));
-    a3->addWidget(m_bitrate);
-    a3->addWidget(m_saveMp3);
-    a3->addWidget(m_saveWav);
-    a3->addWidget(m_success);
-    a3->addStretch(1);
-    al->addLayout(a3);
-    al->addWidget(m_outLabel);
-    root->addWidget(ab);
-
-    // ---- diagnostics
+    // ============================================================ status strip + diagnostics
+    auto *sr = new QHBoxLayout;
+    sr->setContentsMargins(12, 0, 12, 0);
+    sr->setSpacing(8);
+    m_dot = new StateIcon(16);
+    m_dot->setObjectName("statusDot");
+    m_status = new QLabel("Starting speech engine…");
+    m_status->setObjectName("statusLabel");
+    m_status->setWordWrap(true);
+    m_title = new QLabel;     // kept for compatibility with older code paths; the title lives in the title bar
+    m_title->hide();
     m_logToggle = new QToolButton;
     m_logToggle->setObjectName("logToggle");
     m_logToggle->setText(" Diagnostics");
@@ -351,19 +468,20 @@ void MainWindow::buildUi() {
     m_logToggle->setIconSize(QSize(14, 14));
     m_logToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_logToggle->setCheckable(true);
+    m_settingsBtn = button("Settings", "settings", "settingsButton");
+    sr->addWidget(m_dot);
+    sr->addWidget(m_status, 1);
+    sr->addWidget(m_logToggle);
+    sr->addWidget(m_settingsBtn);
+    body->addLayout(sr);
     m_log = new QPlainTextEdit;
     m_log->setObjectName("logView");
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(2000);
-    m_log->setMaximumHeight(140);
+    m_log->setMaximumHeight(130);
     m_logPanel = m_log;
     m_logPanel->hide();
-    auto *logRow = new QHBoxLayout;
-    logRow->setContentsMargins(0, 0, 0, 0);
-    logRow->addWidget(m_logToggle);
-    logRow->addStretch(1);
-    root->addLayout(logRow);
-    root->addWidget(m_logPanel);
+    body->addWidget(m_logPanel);
 
     connect(m_logToggle, &QToolButton::toggled, this, [this](bool on) {
         m_logPanel->setVisible(on);
@@ -374,8 +492,10 @@ void MainWindow::buildUi() {
     connect(m_import, &QPushButton::clicked, this, &MainWindow::importText);
     connect(m_paste, &QPushButton::clicked, m_text, &QPlainTextEdit::paste);
     connect(m_clear, &QPushButton::clicked, m_text, &QPlainTextEdit::clear);
+    connect(m_checkText, &QPushButton::clicked, this, [this] { analyzeText(false); });
     connect(m_text, &QPlainTextEdit::textChanged, this, &MainWindow::updateCounts);
-    connect(m_generate, &QPushButton::clicked, this, [this] { generate(false); });
+    connect(m_generate, &QPushButton::clicked, this, &MainWindow::onGenerateClicked);
+    connect(m_precheck, &QCheckBox::toggled, this, [](bool on) { Config::settings().setValue("precheck", on); });
     connect(m_preview, &QToolButton::clicked, this, &MainWindow::onPreviewClicked);
     connect(m_cancel, &QPushButton::clicked, this, &MainWindow::cancelJob);
     connect(m_play, &QPushButton::clicked, this, &MainWindow::togglePlay);
@@ -389,18 +509,60 @@ void MainWindow::buildUi() {
         m_levels.clear();
         m_player->setPosition(m_seek->value());
     });
+    connect(m_verOriginal, &QPushButton::clicked, this, [this] {
+        m_verOriginal->setChecked(true);
+        m_verRepaired->setChecked(false);
+        if (!m_acceptedPath.isEmpty() && m_audioPath != m_acceptedPath) loadAudio(m_acceptedPath);
+    });
+    connect(m_verRepaired, &QPushButton::clicked, this, [this] {
+        m_verOriginal->setChecked(false);
+        m_verRepaired->setChecked(true);
+        if (!m_candidatePath.isEmpty() && m_audioPath != m_candidatePath) loadAudio(m_candidatePath);
+    });
+    connect(m_qa, &QaPanel::recheckRequested, this, &MainWindow::recheckSpeech);
+    connect(m_qa, &QaPanel::replayRequested, this, &MainWindow::onReplay);
+    connect(m_qa, &QaPanel::correctRequested, this, &MainWindow::onCorrect);
+    connect(m_qa, &QaPanel::repairRequested, this, [this](const QString &mode, const QJsonArray &chunks) { runRepair(mode, chunks, {}); });
+    connect(m_qa, &QaPanel::acceptRepairRequested, this, &MainWindow::acceptRepair);
+    connect(m_qa, &QaPanel::discardRepairRequested, this, &MainWindow::discardRepair);
+    connect(m_qa, &QaPanel::saveFeedbackRequested, this, &MainWindow::onSaveFeedback);
+    connect(m_qa, &QaPanel::dictionaryRequested, this, &MainWindow::openDictionary);
 
-    auto *fileMenu = menuBar()->addMenu("&File");
-    fileMenu->addAction("&Import Text…", this, &MainWindow::importText, QKeySequence::Open);
-    fileMenu->addAction("Save as &MP3…", this, &MainWindow::saveMp3, QKeySequence::Save);
-    fileMenu->addSeparator();
-    fileMenu->addAction("E&xit", this, &QWidget::close, QKeySequence::Quit);
-    auto *toolsMenu = menuBar()->addMenu("&Tools");
-    toolsMenu->addAction("&Settings…", this, &MainWindow::openSettings);
-    toolsMenu->addAction("&Re-check backend", this, &MainWindow::startWorker);
+    buildActions();
+    if (custom) {
+        for (auto *a : m_actions) m_titleBar->commandMenu()->addAction(a);
+    } else {                                   // native frame fallback: the same commands in a normal menu bar
+        auto *menu = menuBar()->addMenu("&Menu");
+        for (auto *a : m_actions) menu->addAction(a);
+    }
 
+    // window placement: restore, but only onto a screen that still exists
+    const QRect saved = Config::settings().value("windowRect").toRect();
+    setGeometry(Frameless::fitToScreens(saved, QSize(1120, 780)));
+    if (Config::settings().value("windowMaximized", false).toBool()) setWindowState(windowState() | Qt::WindowMaximized);
+
+    m_qa->setSessionAvailable(false);
     setState(State::Starting);
     updateCounts();
+}
+
+void MainWindow::showEvent(QShowEvent *e) {
+    QMainWindow::showEvent(e);
+    if (!m_entrancePlayed) {
+        m_text->setFocus();                     // text-first workflow: start typing immediately
+        // staggered, subtle panel entrance (skipped with reduced motion)
+        m_entrancePlayed = true;
+        int i = 0;
+        for (Card *c : m_cards) c->playEntrance(60 * i++);
+    }
+}
+
+void MainWindow::changeEvent(QEvent *e) {
+    QMainWindow::changeEvent(e);
+    if (e->type() == QEvent::WindowStateChange && m_shell) {
+        m_shell->setMaximizedLook(isMaximized() || isFullScreen());
+        m_titleBar->syncWindowState();
+    }
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *e) {
@@ -420,20 +582,27 @@ void MainWindow::setStatus(const QString &text, bool error) {
 
 void MainWindow::updateHeaderIcon() {
     StateIcon::Kind k = StateIcon::Kind::Busy;
-    QString tip = "Working";
+    QString tip = "Working", chip = "Working…";
+    const QString be = m_backend && m_backend->count() ? m_backend->currentData().toString() : QString();
     switch (m_state) {
     case State::Idle:
         k = m_statusError ? StateIcon::Kind::Warning : StateIcon::Kind::Success;
         tip = m_statusError ? "Ready, but the last action reported a problem" : "Backend ready";
+        chip = "Ready" + (be.isEmpty() ? QString() : " · " + be);
         break;
     case State::Unavailable:
         k = StateIcon::Kind::Error;
         tip = "Backend unavailable";
+        chip = "Backend unavailable";
         break;
+    case State::Starting: chip = "Starting…"; break;
+    case State::Rechecking: chip = "Checking speech…"; break;
+    case State::Repairing: chip = "Repairing…"; break;
     default: break;
     }
     m_dot->setKind(k);
     m_dot->setToolTip(tip);
+    m_titleBar->setBackendStatus(int(k), chip);
 }
 
 void MainWindow::log(const QString &line) {
@@ -443,9 +612,10 @@ void MainWindow::log(const QString &line) {
 void MainWindow::setState(State s) {
     m_state = s;
     const bool idle = s == State::Idle;
-    const bool busy = s == State::Generating || s == State::Exporting;
+    const bool busy = s == State::Generating || s == State::Exporting || s == State::Rechecking || s == State::Repairing;
     const bool haveAudio = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
-    m_generate->setEnabled(idle);
+    m_generate->setEnabled(idle && !m_analyzing);
+    m_checkText->setEnabled(idle && !m_analyzing);
     m_backend->setEnabled(idle);
     m_voice->setEnabled(idle);
     m_lang->setEnabled(idle);
@@ -465,6 +635,10 @@ void MainWindow::setState(State s) {
     // The spinner shows only while the backend is actually working on something.
     m_busy->setVisible(busy);
     if (!busy) m_progress->resetNow();
+    m_qa->setBusy(s == State::Rechecking || s == State::Repairing,
+                  s == State::Rechecking ? "Transcribing and comparing the speech…" : "Regenerating and rechecking the affected chunks…");
+    m_qa->setSessionAvailable(!m_sessionDir.isEmpty() && (idle || busy));
+    m_qa->setCandidateAvailable(!m_candidatePath.isEmpty());
     updateHeaderIcon();
     updateAudioPanel();
     updatePreviewUi();
@@ -477,6 +651,20 @@ void MainWindow::updateAudioPanel() {
         m_audioStack->setCurrentIndex(idx);
         Fx::fadeIn(m_audioStack->currentWidget(), 200);
     }
+    updateVersionBar();
+}
+
+void MainWindow::updateVersionBar() {
+    const bool has = !m_candidatePath.isEmpty();
+    if (has != m_versionBar->isVisibleTo(this)) {
+        m_versionBar->setVisible(has);
+        if (has) Fx::fadeIn(m_versionBar, 200);
+    }
+    if (has) {
+        const bool rep = m_audioPath == m_candidatePath;
+        m_verRepaired->setChecked(rep);
+        m_verOriginal->setChecked(!rep);
+    }
 }
 
 void MainWindow::updatePreviewUi() {
@@ -485,13 +673,27 @@ void MainWindow::updatePreviewUi() {
     else if (m_previewPlayer->playbackState() == QMediaPlayer::PlayingState) mode = PreviewButton::Mode::Speaking;
     m_preview->setMode(mode);
     // Usable when idle (start) or while a preview is running (cancel/stop).
-    m_preview->setEnabled((m_state == State::Idle && m_voice->count() > 0) || mode != PreviewButton::Mode::Idle);
+    m_preview->setEnabled((m_state == State::Idle && m_voice->count() > 0 && !m_analyzing) || mode != PreviewButton::Mode::Idle);
 }
 
 QProcessEnvironment MainWindow::workerEnv() const {
     QProcessEnvironment e;
     if (!m_sessionApiKey.isEmpty()) e.insert("GEMINI_API_KEY", m_sessionApiKey);  // memory only, never persisted
     return e;
+}
+
+QString MainWindow::currentLanguage() const {
+    return m_lang->isVisible() && m_lang->count() ? m_lang->currentData().toString() : QStringLiteral("en-us");
+}
+
+QJsonObject MainWindow::qaThresholds() const {
+    const QByteArray raw = Config::settings().value("qaThresholds").toString().toUtf8();
+    const QJsonDocument doc = QJsonDocument::fromJson(raw);
+    return doc.isObject() ? doc.object() : QJsonObject();
+}
+
+bool MainWindow::backendHasIpa() const {
+    return m_caps.value("pronunciation").toObject().value(m_backend->currentData().toString()).toObject().value("ipa").toBool();
 }
 
 // ---------------------------------------------------------------- worker lifecycle
@@ -527,8 +729,19 @@ void MainWindow::refreshHealth() {
     m_capsId = m_client->request("capabilities", {}, 90000);
 }
 
+void MainWindow::applyHealth(const QJsonObject &r) {
+    const QJsonObject asr = r.value("asr").toObject(), llm = r.value("llm").toObject();
+    QStringList p;
+    for (const auto &x : asr.value("problems").toArray()) p << x.toString();
+    m_qa->setAsrAvailable(asr.isEmpty() ? false : asr.value("available").toBool(), p.join(' '));
+    m_qa->setLlmAvailable(llm.value("enabled").toBool() && llm.value("available").toBool());
+    if (!asr.value("available").toBool() && !asr.isEmpty()) log("[health] speech recognition unavailable: " + p.join(' '));
+}
+
 void MainWindow::onWorkerStopped(const QString &reason) {
     m_jobId.clear();
+    m_job = Job::None;
+    m_analyzing = false;
     setStatus(reason, true);
     setState(State::Unavailable);
 }
@@ -555,8 +768,10 @@ void MainWindow::backendChanged() {
     note += b == "local" ? " (a weighted blend of stock Kokoro voices) — not a newly trained model. Runs offline."
             : b == "google" ? " (a Google prebuilt voice plus a style instruction) — not a trained model. Text is sent to Google."
                             : ". This is a TEST backend that emits a tone, not speech.";
+    note += backendHasIpa() ? " Pronunciation control: respelling and IPA." : " Pronunciation control: respelling only (no IPA).";
     m_voiceNote->setText(note);
     m_voiceNote->setToolTip(note);
+    updateHeaderIcon();
 }
 
 void MainWindow::onFinished(const QString &id, const QString &status, const QJsonObject &r) {
@@ -571,6 +786,7 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
             return;
         }
         m_health = r;
+        const QString previous = m_backend->count() ? m_backend->currentData().toString() : QString();
         m_backend->blockSignals(true);
         m_backend->clear();
         QStringList problems;
@@ -585,10 +801,13 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
             }
             log("[health] " + it.key() + (b.value("available").toBool() ? " OK" : " unavailable"));
         }
+        const int keep = m_backend->findData(previous);
+        if (keep >= 0) m_backend->setCurrentIndex(keep);
         m_backend->blockSignals(false);
         for (const QString &p : problems) log("[health] " + p);
         if (!r.value("mp3").toObject().value("available").toBool())
             log("[health] MP3 export unavailable: " + r.value("mp3").toObject().value("problem").toString());
+        applyHealth(r);
         if (m_backend->count() == 0) {
             setStatus("No speech backend is available. " + problems.join("  "), true);
             setState(State::Unavailable);
@@ -618,12 +837,14 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         }
         return;
     }
-    if (id != m_jobId) return;   // reply to a cancel request or a stale job
+    if (id != m_jobId) return;   // reply to a cancel request, a stale job, or a callback-based request
 
     m_jobId.clear();
-    const bool wasExport = m_state == State::Exporting;
+    const Job job = m_job;
+    m_job = Job::None;
     if (status == "success") {
-        if (wasExport) {
+        switch (job) {
+        case Job::Export: {
             const QString out = r.value("output_path").toString();
             QFileInfo fi(out);
             if (!fi.exists() || fi.size() == 0) {
@@ -631,18 +852,56 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
             } else {
                 setStatus(QString("Saved %1 (%2 KB, %3 s)").arg(QDir::toNativeSeparators(out))
                               .arg(fi.size() / 1024).arg(r.value("duration_s").toDouble(), 0, 'f', 1));
-                m_outLabel->setText("Saved: " + QDir::toNativeSeparators(out));
+                static const char *labels[] = {"not checked", "checking", "verified", "needs review", "failed"};
+                m_outLabel->setText("Saved: " + QDir::toNativeSeparators(out) + "  ·  speech check: " +
+                                    labels[int(m_qa->status())]);
                 m_success->play();
             }
-        } else if (m_jobIsTest) {
+            break;
+        }
+        case Job::Preview:
             loadPreview(r.value("output_path").toString());
             setStatus(QString("Voice preview generated (%1 s).").arg(r.value("duration_s").toDouble(), 0, 'f', 1));
             m_previewPlayer->play();
-        } else {
+            break;
+        case Job::Recheck: {
+            m_qa->setBusy(false);
+            m_qa->setSummary(r.value("summary").toObject());
+            const QString st = r.value("summary").toObject().value("status").toString();
+            setStatus(st == "verified" ? "Speech check finished: all automated checks passed."
+                      : st == "failed" ? "Speech check finished: failed — see the report."
+                                       : QString("Speech check finished: %1 suspected issue(s) need review.")
+                                             .arg(r.value("summary").toObject().value("issue_count").toInt()), st == "failed");
+            break;
+        }
+        case Job::Repair: {
+            m_qa->setBusy(false);
+            m_repairResult = r;
+            m_qa->setRepairResult(r);
+            m_candidatePath = r.value("candidate_path").toString();
+            const int n = r.value("repaired_chunks").toArray().size(), u = r.value("unresolved_chunks").toArray().size();
+            if (!m_candidatePath.isEmpty()) {
+                loadAudio(m_candidatePath);           // preview the repaired version; the original stays untouched in the session
+                setStatus(QString("Repaired %1 chunk(s) and rechecked them%2. Listen, then accept or keep the original.")
+                              .arg(n).arg(u ? QString("; %1 could not be fixed").arg(u) : QString()));
+            } else {
+                setStatus("No correction could be confirmed by the recheck — the original audio is unchanged. See the report for why.", true);
+            }
+            break;
+        }
+        case Job::Synth:
+        default:
+            if (r.contains("session")) {
+                removeSession();
+                m_sessionDir = r.value("session").toObject().value("dir").toString();
+                m_acceptedPath = r.value("output_path").toString();
+                m_qa->reset();
+            }
             loadAudio(r.value("output_path").toString());
             setStatus(QString("Generated %1 s of audio with %2 / %3.")
                           .arg(r.value("duration_s").toDouble(), 0, 'f', 1, ' ')
                           .arg(r.value("backend").toString(), r.value("voice").toString()));
+            break;
         }
     } else if (status == "cancelled") {
         setStatus("Cancelled.");
@@ -657,10 +916,68 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
 void MainWindow::onProgress(const QString &id, int pct, const QString &msg) {
     if (id != m_jobId) return;
     if (pct > 0) m_progress->setTarget(pct);   // 0 = "starting": the spinner shows activity, no invented percentage
-    m_status->setText((m_state == State::Exporting ? "Exporting… " : "Generating… ") + msg);
+    const QString verb = m_state == State::Exporting ? "Exporting… " : m_state == State::Rechecking ? "Checking… "
+                         : m_state == State::Repairing ? "Repairing… " : "Generating… ";
+    m_status->setText(verb + msg);
 }
 
 // ---------------------------------------------------------------- actions
+void MainWindow::onGenerateClicked() {
+    if (m_state != State::Idle || !m_jobId.isEmpty() || m_analyzing) return;
+    if (m_text->toPlainText().trimmed().isEmpty()) {
+        setStatus("Enter or import some text first.", true);
+        return;
+    }
+    if (m_precheck->isChecked() && m_backend->count() > 0) analyzeText(true);
+    else generate(false);
+}
+
+void MainWindow::analyzeText(bool thenGenerate) {
+    if (m_state != State::Idle || m_analyzing) return;
+    const QString text = m_text->toPlainText();
+    if (text.trimmed().isEmpty()) {
+        setStatus("Enter or import some text first.", true);
+        return;
+    }
+    m_analyzing = true;
+    const int seq = ++m_analysisSeq;
+    setState(m_state);
+    setStatus("Checking the text for pronunciation problems…");
+    m_client->call("analyze_text", {{"text", text}, {"backend", m_backend->currentData().toString()}, {"language", currentLanguage()}}, this,
+                   [this, seq, text, thenGenerate](const QString &st, const QJsonObject &r) {
+        if (seq != m_analysisSeq) return;                          // a newer request superseded this answer
+        m_analyzing = false;
+        setState(m_state);
+        if (st != "success") {
+            setStatus("Pronunciation check unavailable (" + r.value("message").toString() + ")", true);
+            if (thenGenerate) generate(false);
+            return;
+        }
+        const int review = r.value("counts").toObject().value("review").toInt();
+        m_textBadge->setText(review ? QString("%1 to review").arg(review) : "no concerns found");
+        const bool changed = text != m_text->toPlainText();
+        if (changed) { m_textBadge->clear(); return; }
+        if (review > 0 && (!thenGenerate || hashOf(text) != m_ackHash)) {
+            showReview(r, thenGenerate);
+            return;
+        }
+        setStatus(review ? QString("%1 item(s) may need review.").arg(review) : "No pronunciation concerns found in the text.");
+        if (thenGenerate) generate(false);
+    }, 60000);
+}
+
+void MainWindow::showReview(const QJsonObject &analysis, bool thenGenerate) {
+    const QString text = m_text->toPlainText();
+    ReviewDialog dlg(m_client, analysis, text, currentLanguage(), m_backend->currentData().toString(),
+                     m_health.value("llm").toObject(), this);
+    if (dlg.exec() == QDialog::Accepted) {
+        m_ackHash = hashOf(text);                 // do not ask again for this exact text
+        generate(false);
+    } else if (thenGenerate) {
+        setStatus("Generation cancelled — review the pronunciations or try again.");
+    }
+}
+
 void MainWindow::generate(bool testVoice) {
     if (m_state != State::Idle || !m_jobId.isEmpty()) return;   // no duplicate requests
     QString text = testVoice ? QStringLiteral("Hello. This is a short test of the selected voice.") : m_text->toPlainText();
@@ -670,6 +987,7 @@ void MainWindow::generate(bool testVoice) {
     }
     releasePreviewFile();    // a new job always supersedes any preview
     QString out;
+    QJsonObject extra;
     if (testVoice) {
         if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
         out = QString("%1/voice-preview-%2.wav").arg(m_tempDir).arg(++m_genCounter);
@@ -680,17 +998,24 @@ void MainWindow::generate(bool testVoice) {
         m_player->setSource({});
         if (!m_audioPath.isEmpty()) m_stale << m_audioPath;
         m_audioPath.clear();
+        removeSession();
+        m_qa->reset();
+        m_qa->setSessionAvailable(false);
+        m_textBadge->clear();
         purgeStale();
         out = QString("%1/preview-%2.wav").arg(m_tempDir).arg(++m_genCounter);
+        extra["session_dir"] = QString("%1/session-%2").arg(m_tempDir).arg(m_genCounter);
     }
 
     QJsonObject p{{"text", text}, {"backend", m_backend->currentData().toString()},
                   {"voice", m_voice->currentData().toString()}, {"output_path", out}, {"output_format", "wav"},
                   {"overwrite", true}};
+    for (auto it = extra.begin(); it != extra.end(); ++it) p[it.key()] = it.value();
     if (m_lang->isVisible() && m_lang->count()) p["language"] = m_lang->currentData().toString();
     if (m_speed->isVisible() && !qFuzzyCompare(m_speed->value(), 1.0)) p["speed"] = m_speed->value();
     if (m_style->isVisible() && !m_style->text().trimmed().isEmpty()) p["style"] = m_style->text().trimmed();
     m_jobIsTest = testVoice;
+    m_job = testVoice ? Job::Preview : Job::Synth;
     m_jobId = m_client->request("synthesize", p);
     m_progress->resetNow();
     setState(State::Generating);
@@ -736,9 +1061,12 @@ void MainWindow::cancelJob() {
 }
 
 void MainWindow::loadAudio(const QString &path) {
+    m_player->stop();
     m_audioPath = path;
     m_player->setSource(QUrl::fromLocalFile(path));
-    m_outLabel->setText("Preview: " + QDir::toNativeSeparators(path) + "  (temporary — use Save to keep it)");
+    const bool rep = !m_candidatePath.isEmpty() && path == m_candidatePath;
+    m_outLabel->setText((rep ? "Repaired version (not accepted yet): " : "Preview: ") + QDir::toNativeSeparators(path) +
+                        "  (temporary — use Save to keep it)");
 }
 
 void MainWindow::exportAudio(const QString &path, const QString &format) {
@@ -747,6 +1075,7 @@ void MainWindow::exportAudio(const QString &path, const QString &format) {
                   {"overwrite", true}};   // overwrite was confirmed by the native save dialog
     if (format == "mp3") p["bitrate_kbps"] = m_bitrate->currentData().toInt();
     m_jobIsTest = false;
+    m_job = Job::Export;
     m_jobId = m_client->request("export", p);
     m_progress->resetNow();
     setState(State::Exporting);
@@ -781,6 +1110,156 @@ void MainWindow::togglePlay() {
 
 void MainWindow::stopPlay() {
     m_player->stop();
+}
+
+// ---------------------------------------------------------------- pronunciation QA
+void MainWindow::recheckSpeech() {
+    if (m_state != State::Idle || m_sessionDir.isEmpty()) return;
+    const bool candidate = !m_candidatePath.isEmpty() && m_audioPath == m_candidatePath;
+    m_job = Job::Recheck;
+    m_jobIsTest = false;
+    QJsonObject rq{{"session_dir", m_sessionDir}, {"which", candidate ? "candidate" : "accepted"}};
+    if (!qaThresholds().isEmpty()) rq["thresholds"] = qaThresholds();
+    m_jobId = m_client->request("recheck", rq, 30 * 60 * 1000);
+    m_progress->resetNow();
+    setState(State::Rechecking);
+    setStatus("Rechecking the speech…");
+}
+
+void MainWindow::runRepair(const QString &mode, const QJsonArray &chunks, const QJsonArray &candidates) {
+    if (m_state != State::Idle || m_sessionDir.isEmpty()) return;
+    bool useLlm = false, allowNet = false;
+    const QJsonObject llm = m_health.value("llm").toObject();
+    if (mode == "auto" && llm.value("enabled").toBool() && llm.value("available").toBool()) {
+        const bool net = llm.value("network").toBool();
+        const auto a = QMessageBox::question(this, "Use AI suggestions?",
+            net ? QString("Auto-repair can also ask the “%1” AI provider for pronunciation suggestions. That sends the sentences "
+                          "that need repair to the provider over the network. Use AI suggestions?").arg(llm.value("provider").toString())
+                : "Auto-repair can also ask the configured AI model for pronunciation suggestions. Use AI suggestions?",
+            QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+        if (a == QMessageBox::Cancel) return;
+        useLlm = a == QMessageBox::Yes;
+        allowNet = useLlm && net;
+    }
+    QJsonObject p{{"session_dir", m_sessionDir}, {"mode", mode}, {"candidates", candidates}, {"max_attempts", 3},
+                  {"use_llm", useLlm}, {"allow_network", allowNet}};
+    if (!chunks.isEmpty()) p["chunks"] = chunks;
+    if (!qaThresholds().isEmpty()) p["thresholds"] = qaThresholds();
+    m_job = Job::Repair;
+    m_jobIsTest = false;
+    m_jobId = m_client->request("regenerate", p, 60 * 60 * 1000);
+    m_progress->resetNow();
+    setState(State::Repairing);
+    setStatus("Repairing the flagged chunks…");
+}
+
+void MainWindow::onCorrect(const QJsonObject &issue) {
+    QJsonObject init{{"written", issue.value("intended").toString()}, {"category", "name"},
+                     {"language", "*"}, {"note", "added from a speech check"}};
+    EntryEditor ed(init, backendHasIpa(), true, this);
+    if (ed.exec() != QDialog::Accepted) return;
+    const QJsonObject e = ed.entry();
+    const QJsonArray cand{QJsonObject{{"chunk", issue.value("chunk")}, {"written", e.value("written")},
+                                      {"hint", e.value("hint")}, {"ipa", e.value("ipa")}}};
+    const int chunk = issue.value("chunk").toInt();
+    if (ed.saveToDictionary()) {
+        DictionaryDialog::addEntry(m_client, this, e, m_backend->currentData().toString(), [=](bool stored, const QJsonObject &) {
+            if (stored) log("[dictionary] added " + e.value("written").toString());
+            runRepair("review", QJsonArray{chunk}, cand);   // regenerate even if the user declined to store it
+        });
+    } else {
+        runRepair("review", QJsonArray{chunk}, cand);
+    }
+}
+
+void MainWindow::onReplay(int chunk) {
+    if (m_sessionDir.isEmpty()) return;
+    const bool candidate = !m_candidatePath.isEmpty() && m_audioPath == m_candidatePath;
+    m_client->call("segment", {{"session_dir", m_sessionDir}, {"chunk", chunk}, {"which", candidate ? "candidate" : "accepted"}}, this,
+                   [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") { setStatus("Cannot replay: " + r.value("message").toString(), true); return; }
+        if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
+        m_previewPlayer->stop();
+        m_previewPlayer->setSource(QUrl::fromLocalFile(r.value("path").toString()));
+        m_previewPlayer->play();
+        setStatus("Replaying chunk " + QString::number(r.value("chunk").toInt() + 1) + ".");
+    });
+}
+
+void MainWindow::acceptRepair() {
+    if (m_candidatePath.isEmpty()) return;
+    m_client->call("accept_repair", {{"session_dir", m_sessionDir}}, this, [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") { setStatus("Could not accept the repair: " + r.value("message").toString(), true); return; }
+        m_candidatePath.clear();
+        m_acceptedPath = r.value("accepted_path").toString();
+        loadAudio(m_acceptedPath);
+        if (!r.value("summary").isNull()) m_qa->setSummary(r.value("summary").toObject());
+        m_qa->setCandidateAvailable(false);
+        setState(m_state);
+        setStatus("Repair accepted. The original audio is still stored in this session; run Recheck Speech to verify the whole result.");
+    });
+}
+
+void MainWindow::discardRepair() {
+    if (m_candidatePath.isEmpty()) return;
+    m_client->call("discard_repair", {{"session_dir", m_sessionDir}}, this, [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") { setStatus("Could not discard the repair: " + r.value("message").toString(), true); return; }
+        m_candidatePath.clear();
+        loadAudio(m_acceptedPath);
+        if (!r.value("summary").isNull()) m_qa->setSummary(r.value("summary").toObject());
+        m_qa->setCandidateAvailable(false);
+        setState(m_state);
+        setStatus("Kept the original audio.");
+    });
+}
+
+void MainWindow::onSaveFeedback(const QJsonObject &attempt) {
+    const QString term = attempt.value("term").toString();
+    const QJsonObject cand = attempt.value("candidate").toObject();
+    const auto add = QMessageBox::question(this, "Keep this correction?",
+        QString("The recheck confirmed that “%1” is now recognised correctly with “%2”.\n\nAdd it to your pronunciation dictionary so "
+                "it is used automatically from now on?").arg(term, cand.value("hint").toString().isEmpty() ? "IPA " + cand.value("ipa").toString()
+                                                                                                         : cand.value("hint").toString()),
+        QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+    if (add == QMessageBox::Cancel) return;
+    const QString backend = m_backend->currentData().toString();
+    auto record = [this, attempt, term, cand, backend] {
+        QString chunkText;
+        for (const auto &c : m_qa->summary().value("chunks").toArray())
+            if (c.toObject().value("chunk").toInt() == attempt.value("chunk").toInt()) chunkText = c.toObject().value("intended").toString();
+        const QJsonObject rec{{"original_text", chunkText.isEmpty() ? m_text->toPlainText().left(1000) : chunkText}, {"term", term},
+                              {"language", currentLanguage()}, {"voice", m_voice->currentData().toString()}, {"backend", backend},
+                              {"pronunciation_settings", QJsonObject{{"speed", m_speed->value()}, {"style", m_style->text()}}},
+                              {"verification", QJsonObject{{"status", attempt.value("recheck_status")}, {"recognized_after", attempt.value("recognized")}}},
+                              {"correction", QJsonObject{{"written", term}, {"hint", cand.value("hint")}, {"ipa", cand.value("ipa")},
+                                                         {"category", "name"}}},
+                              {"succeeded", attempt.value("term_resolved").toBool()},
+                              {"versions", m_qa->summary().value("versions").toObject()}};
+        m_client->call("feedback", {{"op", "status"}}, this, [this, rec](const QString &st, const QJsonObject &s) {
+            if (st != "success") return;
+            if (!s.value("consent").toObject().value("store_feedback").toBool()) {
+                if (QMessageBox::question(this, "Save corrections locally?",
+                        "Save approved corrections on this computer so they can be inspected, exported, deleted and used to test future "
+                        "dictionary changes? Nothing is uploaded and no AI model is trained.") != QMessageBox::Yes) return;
+                m_client->call("feedback", {{"op", "set_consent"}, {"store_feedback", true}}, this, [](const QString &, const QJsonObject &) {});
+            }
+            m_client->call("feedback", {{"op", "record"}, {"record", rec}}, this, [this](const QString &st2, const QJsonObject &r) {
+                setStatus(st2 == "success" ? "Correction saved for learning (local)." : "Could not save: " + r.value("message").toString(), st2 != "success");
+            });
+        });
+    };
+    if (add == QMessageBox::Yes) {
+        const QJsonObject entry{{"written", term}, {"hint", cand.value("hint")}, {"ipa", cand.value("ipa")}, {"category", "name"},
+                                {"source", cand.value("source").toString() == "llm" ? "llm-approved" : "feedback"}};
+        DictionaryDialog::addEntry(m_client, this, entry, backend, [record](bool, const QJsonObject &) { record(); });
+    } else {
+        record();
+    }
+}
+
+void MainWindow::openDictionary() {
+    DictionaryDialog d(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa(), this);
+    d.exec();
 }
 
 // ---------------------------------------------------------------- playback levels (real data)
@@ -853,6 +1332,7 @@ void MainWindow::updateCounts() {
     const QString t = m_text->toPlainText();
     const int words = t.isEmpty() ? 0 : t.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).size();
     m_counts->setText(QString("%1 characters · %2 words").arg(t.size()).arg(words));
+    m_textBadge->clear();
     const bool empty = t.isEmpty();
     if (m_inputEmpty->isHidden() == empty) {
         m_inputEmpty->setVisible(empty);
@@ -863,8 +1343,12 @@ void MainWindow::updateCounts() {
 void MainWindow::openSettings() {
     QDialog d(this);
     d.setWindowTitle("Settings");
-    d.setMinimumWidth(560);
-    auto *form = new QFormLayout(&d);
+    d.setMinimumWidth(620);
+    auto *outer = new QVBoxLayout(&d);
+    auto *tabs = new QTabWidget;
+    outer->addWidget(tabs);
+    auto *general = new QWidget;
+    auto *form = new QFormLayout(general);
     auto *py = new QLineEdit(Config::settings().value("pythonExe").toString());
     py->setPlaceholderText("auto: " + Config::findPython());
     auto *root = new QLineEdit(Config::settings().value("engineRoot").toString());
@@ -877,6 +1361,8 @@ void MainWindow::openSettings() {
     theme->setCurrentText(ThemeManager::instance().current());
     auto *reduce = new QCheckBox("Reduce motion (also follows the Windows animation setting)");
     reduce->setChecked(Config::settings().value("reduceMotion", false).toBool());
+    auto *native = new QCheckBox("Use the standard Windows title bar (takes effect after restart)");
+    native->setChecked(Config::settings().value("nativeFrame", false).toBool());
     auto browse = [&](QLineEdit *e, bool dir) {
         auto *b = new AnimatedButton("Browse…");
         connect(b, &QPushButton::clicked, &d, [=, &d] {
@@ -894,26 +1380,41 @@ void MainWindow::openSettings() {
     form->addRow("Google API key (this session only)", key);
     form->addRow("Theme", theme);
     form->addRow("", reduce);
+    form->addRow("", native);
     auto *note = new QLabel("The API key is held in memory and passed to the worker; it is never written to disk. "
                             "Set GEMINI_API_KEY in your user environment for a persistent key. Saving restarts the worker.");
     note->setWordWrap(true);
     note->setObjectName("muted");
     form->addRow(note);
+    tabs->addTab(general, "General");
+    auto *scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    auto *pron = new PronSettings(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa());
+    scroll->setWidget(pron);
+    tabs->addTab(scroll, "Pronunciation");
+    connect(pron, &PronSettings::changed, this, [this] {
+        m_client->call("health", {}, this, [this](const QString &st, const QJsonObject &r) {
+            if (st == "success") { m_health = r; applyHealth(r); }
+        }, 90000);
+    });
     auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    form->addRow(bb);
+    outer->addWidget(bb);
     connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
     connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
+    d.resize(680, 620);
     if (d.exec() != QDialog::Accepted) return;
     Config::settings().setValue("pythonExe", py->text().trimmed());
     Config::settings().setValue("engineRoot", root->text().trimmed());
     Config::settings().setValue("reduceMotion", reduce->isChecked());
+    Config::settings().setValue("nativeFrame", native->isChecked());
     Config::settings().setValue("theme", theme->currentText());
     if (theme->currentText() != ThemeManager::instance().current()) {
         ThemeManager::instance().apply(theme->currentText());
         if (ThemeManager::instance().usingFallback()) setStatus(ThemeManager::instance().lastError(), true);
     }
     m_sessionApiKey = key->text().trimmed();
-    if (m_state == State::Generating || m_state == State::Exporting) cancelJob();
+    if (m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking || m_state == State::Repairing)
+        cancelJob();
     // Restart: stopping triggers workerStopped; start again afterwards.
     if (m_client->isRunning()) {
         auto *conn = new QMetaObject::Connection;
@@ -930,6 +1431,11 @@ void MainWindow::openSettings() {
 
 void MainWindow::closeEvent(QCloseEvent *e) {
     m_waveTimer.stop();
+    ++m_analysisSeq;
+    // remember where the window was (its normal, un-maximised rectangle)
+    Config::settings().setValue("windowMaximized", isMaximized());
+    if (!isMaximized() && !isFullScreen()) Config::settings().setValue("windowRect", geometry());
+    else Config::settings().setValue("windowRect", normalGeometry());
     if (!m_jobId.isEmpty()) m_client->cancel(m_jobId);
     m_player->stop();
     m_player->setSource({});

@@ -58,7 +58,10 @@ void ButtonFx::paint(QPainter &p) const {
         p.setBrush(c);
         p.drawRoundedRect(r, radius, radius);
     };
-    layer(theme.color("fx-hover", QColor(255, 255, 255, 20)), m_hover);
+    const QVariant custom = m_w->property("fxHoverColor");      // e.g. the red hover of the window close button
+    layer(custom.canConvert<QColor>() && custom.value<QColor>().isValid() ? custom.value<QColor>()
+                                                                          : theme.color("fx-hover", QColor(255, 255, 255, 20)),
+          m_hover);
     layer(theme.color("fx-press", QColor(0, 0, 0, 48)), m_press);
 }
 

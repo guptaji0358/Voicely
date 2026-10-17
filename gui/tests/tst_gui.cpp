@@ -32,6 +32,7 @@ class TstGui : public QObject {
 private slots:
     void initTestCase() {
         w = new MainWindow;
+        w->setPreCheckEnabled(false);     // these tests exercise generation directly; the pre-check has its own tests (tst_ui)
         w->show();
         waitState(MainWindow::State::Idle);
         auto *be = get<QComboBox>("backendCombo");
@@ -82,6 +83,7 @@ private slots:
         // New window with a slow worker so there is time to cancel.
         qputenv("SPEECH_ENGINE_MOCK_DELAY", "0.3");
         MainWindow slow;
+        slow.setPreCheckEnabled(false);
         slow.show();
         QElapsedTimer t; t.start();
         while (slow.state() != MainWindow::State::Idle && t.elapsed() < 30000) QTest::qWait(10);
@@ -156,6 +158,7 @@ private slots:
     }
     void realLocalBackendEndToEnd() {   // real Kokoro speech; skipped unless the model is installed
         MainWindow r;
+        r.setPreCheckEnabled(false);
         r.show();
         QElapsedTimer t; t.start();
         while (r.state() != MainWindow::State::Idle && t.elapsed() < 60000) QTest::qWait(10);

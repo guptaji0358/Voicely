@@ -29,3 +29,17 @@
 @icon-accent:    #6ea0ff;
 @wave:           #3d7eff;
 @wave-idle:      #2e3442;
+
+/* Depth tokens (floating panels, window backdrop) */
+@bg-top:         #181c25;
+@bg-bottom:      #0e1015;
+@surface-top:    #222733;
+@surface-bottom: #1a1e27;
+@shadow:         #70000000;
+@highlight:      #1affffff;
+@glow:           #3d7eff;
+@grid:           #3d7eff;
+@success-soft:   #15301f;
+@warning-soft:   #3a2f12;
+@danger-soft:    #3b1a1c;
+@accent-softer:  #1b2740;

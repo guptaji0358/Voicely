@@ -21,7 +21,10 @@ import traceback
 import wave
 from pathlib import Path
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2                      # current; version-1 requests are still accepted (see docs/PROTOCOL.md)
+SUPPORTED_VERSIONS = (1, 2)
+V1_ACTIONS = {"health", "capabilities", "cancel", "synthesize", "export", "shutdown"}
+JOB_ACTIONS = {"synthesize", "export", "recheck", "regenerate", "llm_analyze", "llm_explain", "asr_download"}
 MAX_TEXT_CHARS = 2_000_000
 LANGUAGES = {  # Kokoro language codes; English-blend voices read other languages with an accent
     "en-us": "English (US)", "en-gb": "English (UK)", "fr-fr": "French", "es": "Spanish",
@@ -48,26 +51,46 @@ class _Out:
                 os._exit(0)                # GUI went away
 
 
+SYNC_ACTIONS = {"analyze_text", "dictionary", "feedback", "llm_status", "llm_configure", "asr_status",
+                "session_info", "segment", "accept_repair", "discard_repair"}
+
+
 def log(msg: str) -> None:
     print(f"[worker] {msg}", file=sys.stderr, flush=True)
 
 
-class Worker:
+from .worker_qa import QAMixin
+
+
+class Worker(QAMixin):
     def __init__(self, out: _Out):
         self.out = out
         self.job: tuple[str, threading.Event] | None = None
         self.lock = threading.Lock()
+        self.versions: dict[str, int] = {}     # request_id -> protocol version to answer with
+        self._qa = None
+
+    @property
+    def qa(self):
+        if self._qa is None:
+            from .qa import QA
+            self._qa = QA()
+        return self._qa
+
+    def _v(self, rid) -> int:
+        return self.versions.get(rid, PROTOCOL_VERSION)
 
     # ---- helpers ---------------------------------------------------------
     def error(self, rid, code, message, **extra):
-        self.out.send({"request_id": rid, "status": "error", "code": code, "message": message, **extra})
+        self.out.send({"request_id": rid, "status": "error", "code": code, "message": message,
+                       "protocol_version": self._v(rid), **extra})
 
     def ok(self, rid, **fields):
-        self.out.send({"request_id": rid, "status": "success", **fields})
+        self.out.send({"request_id": rid, "status": "success", "protocol_version": self._v(rid), **fields})
 
     def progress(self, rid, pct, message=""):
         self.out.send({"request_id": rid, "event": "progress", "progress": int(max(0, min(100, pct))),
-                       "message": message})
+                       "message": message, "protocol_version": self._v(rid)})
 
     # ---- dispatch --------------------------------------------------------
     def handle(self, line: str) -> None:
@@ -82,10 +105,17 @@ class Worker:
         if not isinstance(rid, str) or not rid:
             self.error(None, "MALFORMED_REQUEST", "missing request_id")
             return
-        if req.get("protocol_version") != PROTOCOL_VERSION:
-            self.error(rid, "UNSUPPORTED_PROTOCOL", f"worker speaks protocol {PROTOCOL_VERSION}")
+        ver = req.get("protocol_version")
+        if ver not in SUPPORTED_VERSIONS or isinstance(ver, bool):
+            self.error(rid, "UNSUPPORTED_PROTOCOL", f"worker speaks protocol {' and '.join(map(str, SUPPORTED_VERSIONS))}")
             return
+        self.versions[rid] = ver
+        if len(self.versions) > 2000:
+            self.versions.pop(next(iter(self.versions)))
         action = req.get("action")
+        if ver == 1 and action in (JOB_ACTIONS | SYNC_ACTIONS) - V1_ACTIONS:
+            self.error(rid, "UNSUPPORTED_PROTOCOL", f"action {action!r} needs protocol_version 2")
+            return
         try:
             if action == "health":
                 self.health(rid, req)
@@ -93,8 +123,10 @@ class Worker:
                 self.capabilities(rid)
             elif action == "cancel":
                 self.cancel(rid, req)
-            elif action in ("synthesize", "export"):
+            elif action in JOB_ACTIONS:
                 self.start_job(rid, action, req)
+            elif action in SYNC_ACTIONS:
+                self.sync_action(rid, action, req)
             elif action == "shutdown":
                 self.ok(rid)
                 os._exit(0)
@@ -122,8 +154,21 @@ class Worker:
         sel = req.get("backend")
         ready = (backends.get(sel, {}).get("available", False) if sel
                  else any(b["available"] for b in backends.values()))
+        extra = {}
+        if self._v(rid) >= 2:
+            try:
+                a = self.qa.make_asr(None).status()
+                extra["asr"] = {"provider": a.provider, "available": a.available, "model": a.model, "problems": a.problems}
+            except Exception as exc:
+                extra["asr"] = {"provider": "?", "available": False, "model": "", "problems": [str(exc)]}
+            try:
+                extra["llm"] = self.qa.llm.status()
+                extra["dictionary"] = {"version": self.qa.dictionary.version, "entries": len(self.qa.dictionary.entries)}
+                extra["feedback"] = {"consent": self.qa.feedback.consent(), **self.qa.feedback.stats()}
+            except Exception as exc:
+                extra["llm"] = {"enabled": False, "available": False, "problems": [str(exc)]}
         self.ok(rid, python=sys.version.split()[0], executable=sys.executable, ready=ready, backends=backends,
-                mp3={"available": enc["mp3"], "encoder": enc["encoder"], "problem": enc["problem"]})
+                mp3={"available": enc["mp3"], "encoder": enc["encoder"], "problem": enc["problem"]}, **extra)
 
     def capabilities(self, rid):
         from .voice_profiles import load_profiles
@@ -135,8 +180,12 @@ class Worker:
                     "google": {"languages": {}, "speed": False, "style": True, "network": True}}
         if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
             backends["mock"] = {"languages": {"en-us": "tone"}, "speed": False, "style": False, "network": False}
+        pron = {"local": {"respelling": True, "ipa": True}, "google": {"respelling": True, "ipa": False}}
+        if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
+            pron["mock"] = {"respelling": True, "ipa": False}
         self.ok(rid, voices=voices, backends=backends, formats=["wav", "mp3"],
-                bitrates=[64, 96, 128, 160, 192, 224, 256, 320])
+                bitrates=[64, 96, 128, 160, 192, 224, 256, 320],
+                **({"pronunciation": pron, "protocol_versions": list(SUPPORTED_VERSIONS)} if self._v(rid) >= 2 else {}))
 
     def cancel(self, rid, req):
         target = req.get("target")
@@ -159,11 +208,20 @@ class Worker:
     def _run_job(self, rid, action, req, cancel):
         from .exceptions import (BackendUnavailableError, ConfigurationError, EncoderUnavailableError,
                                  InvalidInputError, RateLimitError, SpeechEngineError, SynthesisCancelled)
+        from .feedback import ConsentRequired
+        from .llm.base import LLMError
         try:
-            info = self.synthesize(rid, req, cancel) if action == "synthesize" else self.export(rid, req, cancel)
-            self.ok(rid, **info)
+            fn = {"synthesize": self.synthesize, "export": self.export, "recheck": self.recheck,
+                  "regenerate": self.regenerate, "llm_analyze": self.llm_analyze, "llm_explain": self.llm_explain,
+                  "asr_download": self.asr_download}[action]
+            self.ok(rid, **fn(rid, req, cancel))
         except SynthesisCancelled:
-            self.out.send({"request_id": rid, "status": "cancelled"})
+            self.out.send({"request_id": rid, "status": "cancelled", "protocol_version": self._v(rid)})
+        except LLMError as exc:
+            log(f"{exc.code}: {exc}")
+            self.error(rid, exc.code, str(exc))
+        except ConsentRequired as exc:
+            self.error(rid, "CONSENT_REQUIRED", str(exc))
         except SpeechEngineError as exc:
             code = {InvalidInputError: "INVALID_INPUT", ConfigurationError: "CONFIGURATION",
                     BackendUnavailableError: "BACKEND_UNAVAILABLE", RateLimitError: "RATE_LIMIT",
@@ -224,6 +282,8 @@ class Worker:
         if req.get("language") and backend.name in ("local", "mock"):
             overrides["local_lang"] = req["language"]
         profile = profile.with_overrides(**overrides)
+        if req.get("session_dir"):
+            return self.synthesize_session(rid, req, cancel, backend, profile, text, out, fmt)
         eng = SpeechEngine(backend, profile)
         total = sum(1 for _ in iter_chunks(text, max_chars=backend.max_chunk_chars,
                                            paragraph_pause_ms=profile.paragraph_pause_ms,

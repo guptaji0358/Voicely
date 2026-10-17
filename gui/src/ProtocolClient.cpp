@@ -58,8 +58,11 @@ QString ProtocolClient::request(const QString &action, QJsonObject params, int t
     const QString id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     if (m_proc.state() != QProcess::Running) {
         QTimer::singleShot(0, this, [this, id] {
-            emit finished(id, "error", {{"request_id", id}, {"status", "error"}, {"code", "WORKER_NOT_RUNNING"},
-                                        {"message", "The Python worker is not running."}});
+            const QJsonObject o{{"request_id", id}, {"status", "error"}, {"code", "WORKER_NOT_RUNNING"},
+                                {"message", "The Python worker is not running."}};
+            const Cb cb = m_callbacks.take(id);
+            if (cb.fn && cb.ctx) cb.fn("error", o);
+            emit finished(id, "error", o);
         });
         return id;
     }
@@ -78,6 +81,12 @@ QString ProtocolClient::request(const QString &action, QJsonObject params, int t
     }
     m_pending.insert(id, t);
     m_proc.write(QJsonDocument(params).toJson(QJsonDocument::Compact) + '\n');
+    return id;
+}
+
+QString ProtocolClient::call(const QString &action, QJsonObject params, QObject *ctx, Callback cb, int timeoutMs) {
+    const QString id = request(action, std::move(params), timeoutMs);
+    m_callbacks.insert(id, {QPointer<QObject>(ctx), std::move(cb)});
     return id;
 }
 
@@ -114,7 +123,8 @@ void ProtocolClient::handleLine(const QByteArray &line) {
         return;
     }
     const QJsonObject o = doc.object();
-    if (o.value("protocol_version").toInt() != kProtocolVersion) {
+    const int ver = o.value("protocol_version").toInt();
+    if (ver != 1 && ver != kProtocolVersion) {
         emit logLine("[protocol] ignored message with unsupported protocol_version");
         return;
     }
@@ -136,6 +146,8 @@ void ProtocolClient::handleLine(const QByteArray &line) {
 void ProtocolClient::complete(const QString &id, const QString &status, const QJsonObject &obj) {
     QTimer *t = m_pending.take(id);
     if (t) { t->stop(); t->deleteLater(); }
+    const Cb cb = m_callbacks.take(id);
+    if (cb.fn && cb.ctx) cb.fn(status, obj);
     emit finished(id, status, obj);
 }
 

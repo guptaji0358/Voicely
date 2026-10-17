@@ -77,3 +77,6 @@ models/
 secrets.*
 credentials*.json
 *api_key*
+
+# Packaging output
+dist/

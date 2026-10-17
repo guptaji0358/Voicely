@@ -9,7 +9,8 @@
 namespace Config {
 
 inline QSettings &settings() {
-    static QSettings s("TTSStudio", "TTSStudio");
+    // Explicit format so QSettings::setDefaultFormat()/setPath() (used by the tests to keep the real profile clean) are honoured.
+    static QSettings s(QSettings::defaultFormat(), QSettings::UserScope, "TTSStudio", "TTSStudio");
     return s;
 }
 

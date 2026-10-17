@@ -2,6 +2,8 @@
 // animations and the preview workflow, against the real worker (mock backend).
 #include "MainWindow.h"
 #include "ui/Buttons.h"
+#include "ui/Card.h"
+#include "ui/Frameless.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
 #include "ui/ThemeManager.h"
@@ -12,12 +14,15 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
 #include <QMediaPlayer>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QToolButton>
+#include <QScreen>
 #include <QtTest>
 
 class TstUi : public QObject {
@@ -34,7 +39,8 @@ private slots:
     void initTestCase() {
         qputenv("TTS_REDUCE_MOTION", "0");
         w = new MainWindow;
-        w->resize(980, 720);
+        w->setPreCheckEnabled(false);
+        w->resize(1120, 780);
         w->show();
         waitState(MainWindow::State::Idle);
         auto *be = get<QComboBox>("backendCombo");
@@ -226,6 +232,128 @@ private slots:
         wf.pushLevel(0.5);
         wf.hide();
         QVERIFY(!wf.tickerRunning());                                // hidden: stopped
+    }
+    // ---- custom frame ---------------------------------------------------------------------------------
+    void edgeHitTesting() {
+        const QSize sz(400, 300);
+        QCOMPARE(Frameless::edgesAt(QPoint(2, 100), sz), Qt::Edges(Qt::LeftEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(398, 100), sz), Qt::Edges(Qt::RightEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(200, 1), sz), Qt::Edges(Qt::TopEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(200, 299), sz), Qt::Edges(Qt::BottomEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(1, 1), sz), Qt::Edges(Qt::LeftEdge | Qt::TopEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(399, 299), sz), Qt::Edges(Qt::RightEdge | Qt::BottomEdge));
+        QCOMPARE(Frameless::edgesAt(QPoint(200, 150), sz), Qt::Edges());
+        QCOMPARE(Frameless::cursorFor(Qt::LeftEdge | Qt::TopEdge), Qt::SizeFDiagCursor);
+        QCOMPARE(Frameless::cursorFor(Qt::RightEdge | Qt::TopEdge), Qt::SizeBDiagCursor);
+        QCOMPARE(Frameless::cursorFor(Qt::LeftEdge), Qt::SizeHorCursor);
+        QCOMPARE(Frameless::cursorFor(Qt::BottomEdge), Qt::SizeVerCursor);
+    }
+    void titleBarControlsMaximizeRestoreMinimize() {
+        QVERIFY(w->customFrame());
+        QVERIFY(w->windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(w->windowFlags().testFlag(Qt::WindowMinimizeButtonHint));         // keeps taskbar minimise/restore working
+        auto *bar = w->findChild<TitleBar *>();
+        QVERIFY(bar && bar->isVisible());
+        QCOMPARE(bar->maximizeButton()->toolTip(), QString("Maximize"));
+        auto *shell = w->findChild<ShellWidget *>("central");
+        QVERIFY(shell->inset() > 0);
+        QTest::mouseClick(bar->maximizeButton(), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(w->isMaximized(), 3000);
+        QTRY_COMPARE_WITH_TIMEOUT(bar->maximizeButton()->toolTip(), QString("Restore"), 2000);
+        QCOMPARE(shell->inset(), 0);                                               // no rounded margin while maximised
+        QTest::mouseClick(bar->maximizeButton(), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!w->isMaximized(), 3000);
+        QVERIFY(shell->inset() > 0);
+        // double-click on the empty title area toggles maximise
+        QTest::mouseDClick(bar, Qt::LeftButton, {}, QPoint(bar->width() / 2, bar->height() / 2));
+        QTRY_VERIFY_WITH_TIMEOUT(w->isMaximized(), 3000);
+        QTest::mouseDClick(bar, Qt::LeftButton, {}, QPoint(bar->width() / 2, bar->height() / 2));
+        QTRY_VERIFY_WITH_TIMEOUT(!w->isMaximized(), 3000);
+        QTest::mouseClick(bar->minimizeButton(), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(w->isMinimized(), 3000);
+        w->showNormal();
+        QTRY_VERIFY_WITH_TIMEOUT(!w->isMinimized(), 3000);
+    }
+    void titleBarCloseButtonClosesTheWindow() {
+        MainWindow other;
+        other.setPreCheckEnabled(false);
+        other.show();
+        auto *bar = other.findChild<TitleBar *>();
+        QVERIFY(bar);
+        QTest::mouseClick(bar->closeButton(), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(!other.isVisible(), 5000);
+    }
+    void captionButtonsAreKeyboardAccessible() {
+        auto *bar = w->findChild<TitleBar *>();
+        QList<QPushButton *> bs{bar->minimizeButton(), bar->maximizeButton(), bar->closeButton()};
+        for (QPushButton *b : bs) {
+            QVERIFY(!b->accessibleName().isEmpty());
+            QVERIFY(b->focusPolicy() & Qt::TabFocus);
+        }
+        QVERIFY(bar->commandMenu()->actions().size() >= 5);
+        QVERIFY(!bar->commandMenu()->actions().first()->shortcut().isEmpty());
+    }
+    void windowPlacementStaysOnAScreen() {
+        const QRect avail = QGuiApplication::primaryScreen()->availableGeometry();
+        const QRect off = Frameless::fitToScreens(QRect(-9000, -9000, 800, 600), QSize(800, 600));
+        QVERIFY2(avail.contains(off.center()), "a window saved on an unplugged monitor must be brought back");
+        const QRect huge = Frameless::fitToScreens(QRect(0, 0, 99999, 99999), QSize(800, 600));
+        QVERIFY(huge.width() <= avail.width() && huge.height() <= avail.height());
+        QCOMPARE(Frameless::fitToScreens(QRect(), QSize(640, 480)).size(), QSize(640, 480));
+    }
+    void nativeFrameFallbackWorks() {
+        qputenv("TTS_NATIVE_FRAME", "1");
+        QVERIFY(!Frameless::customFrameWanted());
+        MainWindow native;
+        native.setPreCheckEnabled(false);
+        QVERIFY(!native.customFrame());
+        QVERIFY(!native.windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(native.menuBar() && !native.menuBar()->actions().isEmpty());       // commands are still reachable
+        native.show();
+        QVERIFY(!native.findChild<TitleBar *>()->isVisible());
+        native.close();
+        qunsetenv("TTS_NATIVE_FRAME");
+        QVERIFY(Frameless::customFrameWanted());
+    }
+    void highDpiRendering() {
+        const qreal dpr = w->devicePixelRatioF();
+        const QPixmap shot = w->grab();
+        QVERIFY(!shot.isNull());
+        QVERIFY(qAbs(shot.devicePixelRatio() - dpr) < 0.01);
+        QVERIFY(qAbs(shot.width() / dpr - w->width()) <= 1);
+        const QPixmap icon = Icons::pixmap(Icons::path("speaker"), QSize(16, 16), QColor("#fff"), 2.0);
+        QCOMPARE(icon.size(), QSize(32, 32));                                      // vector icons render at physical resolution
+        QCOMPARE(icon.devicePixelRatio(), 2.0);
+        const QImage img = icon.toImage();
+        int opaque = 0;
+        for (int y = 0; y < img.height(); ++y) for (int x = 0; x < img.width(); ++x) opaque += qAlpha(img.pixel(x, y)) > 128;
+        QVERIFY(opaque > 20);
+    }
+    void animationsStopWhenHidden() {
+        auto *b = new AnimatedButton("Hover me");
+        b->show();
+        QEnterEvent enter(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5));
+        QApplication::sendEvent(b, &enter);
+        QTRY_VERIFY_WITH_TIMEOUT(b->hoverLevel() > 0.5, 1000);
+        b->hide();
+        QCOMPARE(b->hoverLevel(), 0.0);                                            // reset, nothing keeps animating
+        delete b;
+        Card c;
+        c.show();
+        QEnterEvent enter2(QPointF(5, 5), QPointF(5, 5), QPointF(5, 5));
+        QApplication::sendEvent(&c, &enter2);
+        QTRY_VERIFY_WITH_TIMEOUT(c.depth() > 0.5, 1000);
+        c.hide();
+        const qreal d = c.depth();
+        QTest::qWait(250);
+        QCOMPARE(c.depth(), d);                                                    // a hidden card does not keep animating
+    }
+    void themeSwitchKeepsRendering() {
+        QVERIFY(ThemeManager::instance().apply("light"));
+        const QImage light = w->grab().toImage();
+        QVERIFY(!light.isNull());
+        QVERIFY(ThemeManager::instance().apply("dark"));
+        QVERIFY(w->grab().toImage() != light);
     }
     void stateIconSpinsOnlyWhenBusyAndVisible() {
         StateIcon s;

@@ -89,6 +89,7 @@ class LocalBackend(Backend):
     requires_network = False
     native_sample_rate = 24000
     max_chunk_chars = 350
+    supports_ipa = True
 
     def __init__(self, model_dir: Path | None = None):
         self._dir = model_dir
@@ -150,6 +151,36 @@ class LocalBackend(Backend):
         self._style_cache[key] = style.astype(np.float32)
         return self._style_cache[key]
 
+    def ipa_vocabulary(self) -> set[str] | None:
+        try:
+            from kokoro_onnx.tokenizer import Tokenizer
+            return set(Tokenizer().vocab)
+        except Exception:
+            return None
+
+    def _phonemes_with_overrides(self, k, text: str, overrides, lang: str) -> str:
+        """Phonemise ``text`` normally, except that each override word is replaced by its IPA."""
+        import re
+        pats = [(re.compile(r"(?<!\w)" + re.escape(w) + r"(?!\w)", re.IGNORECASE), ipa) for w, ipa in overrides if w and ipa]
+        marks = []
+        for rx, ipa in pats:
+            for m in rx.finditer(text):
+                marks.append((m.start(), m.end(), ipa))
+        marks.sort()
+        out, pos, last_end = [], 0, -1
+        for s0, e0, ipa in marks:
+            if s0 < last_end:
+                continue
+            seg = text[pos:s0]
+            if seg.strip():
+                out.append(k.tokenizer.phonemize(seg, lang).strip())
+            out.append(ipa)
+            pos, last_end = e0, e0
+        tail = text[pos:]
+        if tail.strip():
+            out.append(k.tokenizer.phonemize(tail, lang).strip())
+        return " ".join(p for p in out if p)
+
     def list_voices(self) -> list[str]:
         try:
             return list(self._load().get_voices())
@@ -166,10 +197,13 @@ class LocalBackend(Backend):
             k = self._load()
             style = self._style(k, profile)
             try:
+                use_ph = bool(params.overrides)
+                payload = self._phonemes_with_overrides(k, text, params.overrides, profile.local_lang) if use_ph else text
                 samples, rate = k.create(
-                    text, voice=style,
+                    payload, voice=style,
                     speed=(params.speed or profile.speed) / ratio,
                     lang=profile.local_lang,
+                    is_phonemes=use_ph,
                     sentence_pause=profile.sentence_pause,
                     clause_pause=profile.clause_pause,
                 )
