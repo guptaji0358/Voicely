@@ -6,6 +6,7 @@
 #include "ui/Card.h"
 #include "ui/DictionaryDialog.h"
 #include "ui/Frameless.h"
+#include "ui/GlStage.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
 #include "ui/Motion.h"
@@ -14,6 +15,7 @@
 #include "ui/ReviewDialog.h"
 #include "ui/ModelLabDialog.h"
 #include "ui/ThemeManager.h"
+#include "ui/VoiceCarousel.h"
 
 #include <QAction>
 #include <QAudioBufferOutput>
@@ -38,6 +40,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMediaDevices>
+#include <QPropertyAnimation>
+#include <QVariantAnimation>
 #include <QMediaPlayer>
 #include <QMenu>
 #include <QMenuBar>
@@ -143,6 +147,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
         m_time->setText(fmtTime(m_player->position()) + " / " + fmtTime(d));
     });
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState st) {
+        updateGlActivity();
         const bool playing = st == QMediaPlayer::PlayingState;
         m_play->setText(playing ? "Pause" : "Play");
         m_play->setIcon(Icons::icon(playing ? "pause" : "play"));
@@ -228,6 +233,7 @@ void MainWindow::buildActions() {
     mk("Pronunciation dictionary…", "dictionary", QKeySequence("Ctrl+D"), [this] { openDictionary(); });
     mk("Model Lab…", "ai", QKeySequence("Ctrl+M"), [this] { openModelLab(); });
     mk("Save as MP3…", "save-mp3", QKeySequence::Save, [this] { saveMp3(); });
+    mk("Show / hide side panel", "settings", QKeySequence("Ctrl+B"), [this] { setPanelOpen(!m_panelOpen); });
     mk("Settings…", "settings", QKeySequence("Ctrl+,"), [this] { openSettings(); });
     mk("Re-check backend", "recheck", QKeySequence(), [this] { startWorker(); });
     auto *sep = new QAction(this);
@@ -278,7 +284,7 @@ void MainWindow::buildUi() {
     auto *tl = static_cast<QVBoxLayout *>(tb->layout());
     m_text = new QPlainTextEdit;
     m_text->setObjectName("textEditor");
-    m_text->setMinimumHeight(150);
+    m_text->setMinimumHeight(240);
     m_inputEmpty = new EmptyState("empty-input", "Nothing to read yet", "Type, paste or import text to begin.", false, m_text->viewport());
     m_inputEmpty->setGeometry(m_text->viewport()->rect());
     m_text->viewport()->installEventFilter(this);
@@ -306,10 +312,11 @@ void MainWindow::buildUi() {
     left->addWidget(tb, 1);
 
     auto *ab = newCard();
+    ab->setRole("bar");
     auto *al = static_cast<QVBoxLayout *>(ab->layout());
     m_audioStack = new QStackedWidget;
     m_audioStack->setObjectName("audioStack");
-    m_audioStack->setFixedHeight(64);
+    m_audioStack->setFixedHeight(96);
     m_audioStack->addWidget(new EmptyState("empty-audio", "No audio yet", "Generate speech to preview it here.", true));
     m_wave = new WaveformWidget;
     m_audioStack->addWidget(m_wave);
@@ -366,7 +373,10 @@ void MainWindow::buildUi() {
     m_outLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_outLabel->setWordWrap(true);
     al->addWidget(m_outLabel);
-    left->addWidget(ab);
+    auto *barRow = new QHBoxLayout;                  // floats inside the column: extra side margin
+    barRow->setContentsMargins(14, 0, 14, 2);
+    barRow->addWidget(ab);
+    left->addLayout(barRow);
 
     // ============================================================ right column: voice, generate, QA
     auto *scroll = new QScrollArea;
@@ -375,7 +385,9 @@ void MainWindow::buildUi() {
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setFixedWidth(390);
+    m_sideScroll = scroll;
     auto *rw = new QWidget;
+    rw->setMinimumWidth(372);
     auto *right = new QVBoxLayout(rw);
     right->setContentsMargins(0, 0, 0, 0);
     right->setSpacing(0);
@@ -420,6 +432,8 @@ void MainWindow::buildUi() {
     m_voiceInfoLabel->setProperty("small", true);
     m_voiceInfoLabel->setWordWrap(true);
     vl->addWidget(m_voiceInfoLabel);
+    m_carousel = new VoiceCarousel(m_voice);
+    vl->addWidget(m_carousel);
     connect(m_voice, &QComboBox::currentIndexChanged, this, [this] {
         m_voiceInfoLabel->setText(m_voiceInfo.value(m_voice->currentData().toString()));
     });
@@ -570,6 +584,70 @@ void MainWindow::buildUi() {
     m_qa->setSessionAvailable(false);
     setState(State::Starting);
     updateCounts();
+
+    connect(m_titleBar->panelButton(), &QToolButton::toggled, this, [this](bool on) { setPanelOpen(on); });
+    connect(m_shell, &ShellWidget::effectsFailed, this, [this](const QString &why) {
+        m_titleBar->setOrbMode(false);
+        m_wave->setGlMode(false);
+        log("3D effects off: " + why);
+    });
+    setPanelOpen(Config::settings().value("sidePanel", true).toBool(), false);
+    applyEffects();
+}
+
+void MainWindow::setPanelOpen(bool open, bool animate) {
+    m_panelOpen = open;
+    Config::settings().setValue("sidePanel", open);
+    { QSignalBlocker b(m_titleBar->panelButton()); m_titleBar->panelButton()->setChecked(open); }
+    const int to = open ? 390 : 0;
+    auto setW = [this](int w) {                       // fixed width (min = max) so the column never gets squeezed
+        m_sideScroll->setMinimumWidth(w);
+        m_sideScroll->setMaximumWidth(w);
+    };
+    if (!animate || Motion::reduced() || !isVisible()) {
+        setW(to);
+        m_sideScroll->setVisible(open);
+        return;
+    }
+    if (open) m_sideScroll->setVisible(true);
+    auto *a = new QVariantAnimation(this);
+    a->setDuration(Motion::ms(260));
+    a->setEasingCurve(QEasingCurve::OutCubic);
+    a->setStartValue(m_sideScroll->maximumWidth());
+    a->setEndValue(to);
+    connect(a, &QVariantAnimation::valueChanged, this, [setW](const QVariant &v) { setW(v.toInt()); });
+    connect(a, &QVariantAnimation::finished, this, [this, open] { if (!open && !m_panelOpen) m_sideScroll->hide(); });
+    a->start(QAbstractAnimation::DeleteWhenStopped);
+}
+
+void MainWindow::applyEffects() {
+    const bool on = m_shell->setEffectsEnabled(Config::settings().value("effects", true).toBool());
+    m_titleBar->setOrbMode(on);
+    m_wave->setGlMode(on);
+    if (auto *gl = m_shell->glStage()) {
+        gl->setOrbAnchor(m_titleBar->orbSlot());
+        gl->setWaveAnchor(m_audioStack);
+        const bool haveAudio = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
+        gl->setWaveStrength(haveAudio ? 1.0 : 0.35);
+    }
+    updateGlActivity();
+}
+
+void MainWindow::feedDemoLevels(double t) {
+    if (auto *gl = m_shell->glStage()) {
+        gl->setWaveStrength(1.0);
+        gl->setActivity(GlStage::Activity::Playing);
+        gl->pushLevel(0.5 + 0.45 * std::sin(t * 5.0) * std::sin(t * 1.3 + 1.0));
+    }
+}
+
+void MainWindow::updateGlActivity() {
+    auto *gl = m_shell ? m_shell->glStage() : nullptr;
+    if (!gl) return;
+    const bool busy = m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking ||
+                      m_state == State::Repairing;
+    const bool playing = m_player->playbackState() == QMediaPlayer::PlayingState;
+    gl->setActivity(playing ? GlStage::Activity::Playing : busy ? GlStage::Activity::Busy : GlStage::Activity::Idle);
 }
 
 void MainWindow::showEvent(QShowEvent *e) {
@@ -668,6 +746,7 @@ void MainWindow::setState(State s) {
     updateHeaderIcon();
     updateAudioPanel();
     updatePreviewUi();
+    updateGlActivity();
 }
 
 void MainWindow::updateAudioPanel() {
@@ -677,6 +756,7 @@ void MainWindow::updateAudioPanel() {
         m_audioStack->setCurrentIndex(idx);
         Fx::fadeIn(m_audioStack->currentWidget(), 200);
     }
+    if (m_shell && m_shell->glStage()) m_shell->glStage()->setWaveStrength(haveAudio ? 1.0 : 0.35);
     updateVersionBar();
 }
 
@@ -1387,7 +1467,10 @@ void MainWindow::tickWave() {
         peak = qMax(peak, m_levels.first().second);
         m_levels.removeFirst();
     }
-    if (peak >= 0) m_wave->pushLevel(peak);   // no data -> the meter stays still rather than faking motion
+    if (peak >= 0) {
+        m_wave->pushLevel(peak);
+        if (auto *gl = m_shell->glStage()) gl->pushLevel(peak);
+    }   // no data -> the meter stays still rather than faking motion
 }
 
 void MainWindow::importText() {
@@ -1445,6 +1528,8 @@ void MainWindow::openSettings() {
     theme->setCurrentText(ThemeManager::instance().current());
     auto *reduce = new QCheckBox("Reduce motion (also follows the Windows animation setting)");
     reduce->setChecked(Config::settings().value("reduceMotion", false).toBool());
+    auto *fx = new QCheckBox("3D visual effects (OpenGL background, orb and waveform)");
+    fx->setChecked(Config::settings().value("effects", true).toBool());
     auto *native = new QCheckBox("Use the standard Windows title bar (takes effect after restart)");
     native->setChecked(Config::settings().value("nativeFrame", false).toBool());
     auto browse = [&](QLineEdit *e, bool dir) {
@@ -1464,6 +1549,7 @@ void MainWindow::openSettings() {
     form->addRow("Google API key (this session only)", key);
     form->addRow("Theme", theme);
     form->addRow("", reduce);
+    form->addRow("", fx);
     form->addRow("", native);
     auto *note = new QLabel("The API key is held in memory and passed to the worker; it is never written to disk. "
                             "Set GEMINI_API_KEY in your user environment for a persistent key. Saving restarts the worker.");
@@ -1491,6 +1577,8 @@ void MainWindow::openSettings() {
     Config::settings().setValue("engineRoot", root->text().trimmed());
     Config::settings().setValue("reduceMotion", reduce->isChecked());
     Config::settings().setValue("nativeFrame", native->isChecked());
+    Config::settings().setValue("effects", fx->isChecked());
+    applyEffects();
     Config::settings().setValue("theme", theme->currentText());
     if (theme->currentText() != ThemeManager::instance().current()) {
         ThemeManager::instance().apply(theme->currentText());

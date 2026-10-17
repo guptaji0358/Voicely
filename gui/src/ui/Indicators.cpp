@@ -155,6 +155,7 @@ void WaveformWidget::onTick() {
 void WaveformWidget::hideEvent(QHideEvent *) { m_tick->stop(); }
 
 void WaveformWidget::paintEvent(QPaintEvent *) {
+    if (m_gl) return;
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);

@@ -2,6 +2,7 @@
 
 #include "Buttons.h"
 #include "Config.h"
+#include "GlStage.h"
 #include "Icons.h"
 #include "Indicators.h"
 #include "ThemeManager.h"
@@ -15,6 +16,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QRadialGradient>
+#include <QTimer>
 #include <QScreen>
 #include <QToolButton>
 #include <QWindow>
@@ -90,12 +92,52 @@ void ShellWidget::setMaximizedLook(bool maximized) {
     m_inset = (m_custom && !maximized) ? kWindowInset : 0;
     setContentsMargins(m_inset, m_inset, m_inset, m_inset);
     m_backdropSize = {};
+    placeGl();
     update();
 }
 
 void ShellWidget::resizeEvent(QResizeEvent *e) {
     QWidget::resizeEvent(e);
     m_backdropSize = {};
+    placeGl();
+}
+
+void ShellWidget::placeGl() {
+    if (!m_gl) return;
+    m_gl->setGeometry(rect().adjusted(m_inset, m_inset, -m_inset, -m_inset));
+    m_gl->setCornerRadius((m_custom && !m_maximized) ? 12 : 0);
+}
+
+bool ShellWidget::setEffectsEnabled(bool on) {
+    if (!on) {
+        if (m_gl) {
+            m_gl->hide();
+            m_gl->deleteLater();
+            m_gl = nullptr;
+        }
+        update();
+        return false;
+    }
+    if (m_gl) return true;
+    if (QGuiApplication::platformName() == "offscreen" || !qEnvironmentVariableIsEmpty("TTS_NO_GL") ||
+        ThemeManager::instance().current() != "dark")
+        return false;
+    m_gl = new GlStage(this);
+    m_gl->setAccent(ThemeManager::instance().color("accent", QColor("#3d7eff")));
+    connect(m_gl, &GlStage::failed, this, [this](const QString &why) {
+        setEffectsEnabled(false);
+        emit effectsFailed(why);
+    });
+    placeGl();
+    m_gl->lower();
+    m_gl->show();
+    QTimer::singleShot(2500, this, [this] {          // no usable context (driver missing) -> flat look
+        if (m_gl && !m_gl->isValid()) {
+            setEffectsEnabled(false);
+            emit effectsFailed("OpenGL context could not be created");
+        }
+    });
+    return true;
 }
 
 void ShellWidget::changeEvent(QEvent *e) {
@@ -205,7 +247,20 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     auto *h = new QHBoxLayout(this);
     h->setContentsMargins(14, 0, 0, 0);
     h->setSpacing(10);
-    auto *logo = new IconWidget("app-logo", "", 20);
+    m_logo = new IconWidget("app-logo", "", 20);
+    m_orbSlot = new QWidget;
+    m_orbSlot->setFixedSize(34, 34);
+    m_orbSlot->hide();
+    m_panelBtn = new QToolButton;
+    m_panelBtn->setObjectName("panelToggle");
+    m_panelBtn->setCheckable(true);
+    m_panelBtn->setChecked(true);
+    m_panelBtn->setIcon(Icons::icon("settings"));
+    m_panelBtn->setIconSize(QSize(16, 16));
+    m_panelBtn->setText("Tools");
+    m_panelBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_panelBtn->setToolTip("Show or hide the voice and pronunciation panel");
+    m_panelBtn->setAccessibleName("Toggle side panel");
     m_name = new QLabel("Voicely");
     m_name->setObjectName("appName");
     m_state = new StateIcon(14);
@@ -237,12 +292,14 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     m_max = caption("captionMaximize", "window-maximize", "Maximize");
     m_close = caption("captionClose", "window-close", "Close");
     m_close->setProperty("fxHoverColor", QColor(232, 17, 35, 230));          // conventional red close hover
-    h->addWidget(logo);
+    h->addWidget(m_logo);
+    h->addWidget(m_orbSlot);
     h->addWidget(m_name);
     h->addSpacing(6);
     h->addWidget(m_state);
     h->addWidget(m_chip);
     h->addStretch(1);
+    h->addWidget(m_panelBtn);
     h->addWidget(m_menuBtn);
     h->addSpacing(8);
     h->addWidget(m_min);
@@ -252,6 +309,11 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     connect(m_min, &QPushButton::clicked, this, [this] { window()->showMinimized(); });
     connect(m_max, &QPushButton::clicked, this, &TitleBar::toggleMaximize);
     connect(m_close, &QPushButton::clicked, this, [this] { window()->close(); });
+}
+
+void TitleBar::setOrbMode(bool on) {
+    m_logo->setVisible(!on);
+    m_orbSlot->setVisible(on);
 }
 
 void TitleBar::setBackendStatus(int kind, const QString &text) {

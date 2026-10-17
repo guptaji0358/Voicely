@@ -27,6 +27,14 @@ int main(int argc, char *argv[]) {
     const QString snap = qEnvironmentVariable("TTS_SNAPSHOT");
     if (!snap.isEmpty()) {
         const QString sample = qEnvironmentVariable("TTS_SNAPSHOT_TEXT");
+        if (!qEnvironmentVariableIsEmpty("TTS_SNAPSHOT_DEMO")) {      // synthetic playback levels for the 3D waveform
+            auto *demo = new QTimer(&w);
+            QObject::connect(demo, &QTimer::timeout, &w, [&w] {
+                static int n = 0;
+                w.feedDemoLevels(0.03 * n++);
+            });
+            demo->start(30);
+        }
         QTimer::singleShot(8000, &w, [&w, &app, snap, sample] {
             if (!sample.isEmpty()) w.setProperty("snapshotText", sample);
             w.grab().save(snap);

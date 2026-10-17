@@ -32,6 +32,8 @@ class QDoubleSpinBox;
 class QLabel;
 class QLineEdit;
 class QMediaPlayer;
+class QScrollArea;
+class VoiceCarousel;
 class QPlainTextEdit;
 class QPushButton;
 class QSlider;
@@ -46,6 +48,9 @@ public:
     ~MainWindow() override;
 
     enum class State { Starting, Idle, Generating, Exporting, Unavailable, Rechecking, Repairing };
+    void feedDemoLevels(double t);          // developer aid (TTS_SNAPSHOT_DEMO): synthetic levels to show the 3D waveform
+    void applyEffects();                    // (re)creates the OpenGL 3D stage according to the setting
+    void setPanelOpen(bool open, bool animate = true);
     State state() const { return m_state; }
     QString lastAudioPath() const { return m_audioPath; }
     QString sessionDir() const { return m_sessionDir; }
@@ -91,6 +96,7 @@ private slots:
 private:
     enum class Job { None, Synth, Preview, Export, Recheck, Repair };
     void buildUi();
+    void updateGlActivity();
     void buildActions();
     void setState(State s);
     void setStatus(const QString &text, bool error = false);
@@ -133,6 +139,9 @@ private:
     QString m_sessionApiKey;
 
     ShellWidget *m_shell;
+    QScrollArea *m_sideScroll = nullptr;
+    VoiceCarousel *m_carousel = nullptr;
+    bool m_panelOpen = true;
     TitleBar *m_titleBar;
     QaPanel *m_qa;
     QList<Card *> m_cards;

@@ -41,3 +41,10 @@
 @warning-soft:   #f6ebcb;
 @danger-soft:    #f8dcdc;
 @accent-softer:  #dbe6fd;
+
+@glass-input:    #ffffff;
+@glass-input-h:  #ffffff;
+@glass-button:   #f1f3f7;
+@glass-border:   #cfd5e0;
+@accent-top:     #5f95ff;
+@accent-bottom:  #2f68d8;

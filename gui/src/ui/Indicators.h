@@ -61,6 +61,7 @@ public:
     void pushLevel(qreal level01);
     void setActive(bool playing);
     void clearLevels();
+    void setGlMode(bool on) { m_gl = on; update(); }   // the OpenGL stage draws the ribbons instead
     bool tickerRunning() const;
     QSize sizeHint() const override { return QSize(320, 72); }
     QSize minimumSizeHint() const override { return QSize(120, 48); }
@@ -72,7 +73,7 @@ private:
     static constexpr int kBars = 56;
     QVector<qreal> m_target, m_shown;
     QTimer *m_tick;
-    bool m_active = false;
+    bool m_active = false, m_gl = false;
 };
 
 // Draws a check mark inside a ring, then holds and fades out. Used after a completed export.

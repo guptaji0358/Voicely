@@ -10,6 +10,7 @@
 #include <QWidget>
 
 class AnimatedButton;
+class GlStage;
 class IconWidget;
 class QLabel;
 class QMenu;
@@ -34,6 +35,13 @@ public:
     void setMaximizedLook(bool maximized);       // no rounded corners / margin while maximized
     bool customFrame() const { return m_custom; }
     int inset() const { return m_inset; }
+    // 3D look: an OpenGL stage under all widgets. Returns whether it is active. It stays off (flat painter look) on the
+    // offscreen platform, in the light theme, with TTS_NO_GL set, or if OpenGL/shaders fail (effectsFailed is emitted).
+    bool setEffectsEnabled(bool on);
+    GlStage *glStage() const { return m_gl; }
+
+signals:
+    void effectsFailed(const QString &reason);
 
 protected:
     void paintEvent(QPaintEvent *) override;
@@ -45,6 +53,8 @@ protected:
 
 private:
     void rebuildBackdrop();
+    void placeGl();
+    GlStage *m_gl = nullptr;
     bool m_custom, m_maximized = false;
     int m_inset;
     QPixmap m_backdrop;
@@ -62,6 +72,9 @@ public:
     AnimatedButton *maximizeButton() const { return m_max; }
     AnimatedButton *closeButton() const { return m_close; }
     void syncWindowState();                                 // swaps the maximize/restore icon
+    QWidget *orbSlot() const { return m_orbSlot; }          // where the 3D orb is drawn (when effects are on)
+    void setOrbMode(bool on);                               // orb slot replaces the flat logo
+    QToolButton *panelButton() const { return m_panelBtn; } // shows / hides the side panel
 
 protected:
     void mousePressEvent(QMouseEvent *) override;
@@ -74,7 +87,8 @@ private:
     QPoint m_pressPos;
     bool m_dragArmed = false;
     AnimatedButton *m_min, *m_max, *m_close;
-    QToolButton *m_menuBtn;
+    QToolButton *m_menuBtn, *m_panelBtn;
+    QWidget *m_logo, *m_orbSlot;
     QMenu *m_menu;
     QLabel *m_name, *m_chip;
     StateIcon *m_state;

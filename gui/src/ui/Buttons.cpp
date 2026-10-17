@@ -5,6 +5,7 @@
 #include "ThemeManager.h"
 
 #include <QEasingCurve>
+#include <QLinearGradient>
 #include <QStyleOptionToolButton>
 #include <QVariantAnimation>
 #include <QtMath>
@@ -45,7 +46,26 @@ void ButtonFx::reset() {
 }
 
 void ButtonFx::paint(QPainter &p) const {
-    if (!m_w->isEnabled() || (m_hover <= 0.001 && m_press <= 0.001)) return;
+    if (!m_w->isEnabled()) return;
+    const QString variant = m_w->property("variant").toString();
+    if (variant != "caption" && variant != "ghost") {
+        // Raised look: a soft gloss on the upper half and a dark lower edge; both flatten while pressed.
+        const qreal radius = ThemeManager::instance().pixels("radius", 6);
+        const QRectF r = QRectF(m_w->rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        p.setRenderHint(QPainter::Antialiasing);
+        const qreal lift = 1.0 - 0.85 * m_press;
+        QLinearGradient gloss(r.topLeft(), r.bottomLeft());
+        gloss.setColorAt(0, QColor(255, 255, 255, int(46 * lift)));
+        gloss.setColorAt(0.5, QColor(255, 255, 255, int(8 * lift)));
+        gloss.setColorAt(1, QColor(0, 0, 0, int(34 * lift)));
+        p.setPen(Qt::NoPen);
+        p.setBrush(gloss);
+        p.drawRoundedRect(r, radius, radius);
+        p.setPen(QPen(QColor(255, 255, 255, int((40 + 40 * m_hover) * lift)), 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawLine(QPointF(r.left() + radius, r.top() + 0.5), QPointF(r.right() - radius, r.top() + 0.5));
+    }
+    if (m_hover <= 0.001 && m_press <= 0.001) return;
     const auto &theme = ThemeManager::instance();
     const qreal radius = theme.pixels("radius", 6);
     const QRectF r = QRectF(m_w->rect()).adjusted(0.5, 0.5, -0.5, -0.5);

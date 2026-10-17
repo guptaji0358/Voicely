@@ -7,10 +7,10 @@
 @font-size-small:  9pt;
 @font-size-title:  14pt;
 @font-size-editor: 11pt;
-@radius:           6px;
-@radius-lg:        10px;
+@radius:           9px;
+@radius-lg:        16px;
 @pad-h:            12px;
-@pad-v:            5px;
+@pad-v:            6px;
 
 * { font-family: @font-family; font-size: @font-size; }
 QWidget { background: transparent; color: @text; }
@@ -38,16 +38,16 @@ QLabel#emptyTitle { color: @text-muted; font-weight: 600; }
 
 /* ---- inputs */
 QPlainTextEdit, QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox {
-    background: @surface-raised; border: 1px solid @border; border-radius: @radius;
+    background: @glass-input; border: 1px solid @glass-border; border-radius: @radius;
     padding: @pad-v 8px; selection-background-color: @selection; selection-color: @text;
 }
 QLineEdit, QDoubleSpinBox, QSpinBox, QComboBox { min-height: 20px; }
-QPlainTextEdit:hover, QLineEdit:hover, QDoubleSpinBox:hover, QSpinBox:hover, QComboBox:hover { border-color: @border-strong; }
+QPlainTextEdit:hover, QLineEdit:hover, QDoubleSpinBox:hover, QSpinBox:hover, QComboBox:hover { border-color: @border-strong; background: @glass-input-h; }
 QPlainTextEdit:focus, QLineEdit:focus, QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus { border-color: @accent; }
 QPlainTextEdit:disabled, QLineEdit:disabled, QDoubleSpinBox:disabled, QSpinBox:disabled, QComboBox:disabled {
     color: @text-disabled; background: @surface; border-color: @border;
 }
-QPlainTextEdit#textEditor { font-size: @font-size-editor; padding: 10px 12px; }
+QPlainTextEdit#textEditor { font-size: 12pt; padding: 14px 16px; border-radius: @radius-lg; }
 QPlainTextEdit#logView { font-family: "Cascadia Mono", "Consolas", monospace; font-size: @font-size-small; }
 QComboBox::drop-down { border: none; width: 22px; }
 QComboBox::down-arrow { image: url(:/icons/combo-arrow.svg); width: 12px; height: 12px; }
@@ -59,12 +59,12 @@ QDoubleSpinBox::up-button, QSpinBox::up-button, QDoubleSpinBox::down-button, QSp
 
 /* ---- buttons */
 QPushButton {
-    background: @surface-raised; border: 1px solid @border; border-radius: @radius;
+    background: @glass-button; border: 1px solid @glass-border; border-radius: @radius;
     padding: @pad-v @pad-h; min-height: 20px;
 }
 QPushButton:focus { border-color: @accent; }
 QPushButton:disabled { color: @text-disabled; background: @surface; border-color: @border; }
-QPushButton#primary, QPushButton[variant="primary"] { background: @accent; border-color: @accent; color: @on-accent; font-weight: 600; padding: 6px 16px; }
+QPushButton#primary, QPushButton[variant="primary"] { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accent-top, stop:1 @accent-bottom); border: 1px solid @accent-top; color: @on-accent; font-weight: 700; padding: 8px 20px; border-radius: 12px; }
 QPushButton#primary:disabled, QPushButton[variant="primary"]:disabled { background: @accent-soft; border-color: @accent-soft; color: @text-disabled; }
 QPushButton[variant="ghost"] { background: transparent; border-color: transparent; }
 QPushButton[variant="danger"] { border-color: @danger; color: @danger; }
@@ -72,7 +72,7 @@ QPushButton[variant="danger"] { border-color: @danger; color: @danger; }
 QToolButton { background: transparent; border: 1px solid transparent; border-radius: @radius; padding: 4px; color: @text-muted; }
 QToolButton:focus { border-color: @accent; }
 QToolButton:disabled { color: @text-disabled; }
-QToolButton#previewButton { background: @surface-raised; border-color: @border; padding: 0; }
+QToolButton#previewButton { background: @glass-button; border-color: @glass-border; padding: 0; }
 QToolButton#previewButton:disabled { background: @surface; }
 QToolButton#logToggle { padding: 2px 6px; font-size: @font-size-small; }
 
@@ -140,3 +140,13 @@ QTabWidget::pane { border: 1px solid @border; border-radius: @radius; }
 QTabBar::tab { padding: 6px 14px; color: @text-muted; border: none; }
 QTabBar::tab:selected { color: @text; border-bottom: 2px solid @accent; }
 QStatusBar { background: transparent; }
+
+/* ---- 3D glass additions */
+QToolButton#panelToggle { color: @text; padding: 4px 10px; border-radius: @radius; }
+QToolButton#panelToggle:checked { background: @accent-softer; color: @accent-top; }
+QWidget#voiceStripInner { background: transparent; }
+QScrollArea#voiceStrip { background: transparent; border: none; }
+QScrollArea#voiceStrip > QWidget > QWidget { background: transparent; }
+QLabel#voiceTitle { font-weight: 700; font-size: @font-size; color: @text; }
+QLabel#stageHint { color: @text-muted; }
+QWidget#waveHole { background: transparent; }

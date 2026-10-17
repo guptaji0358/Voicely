@@ -10,9 +10,9 @@
 @text:           #dde1e9;
 @text-muted:     #8b93a4;
 @text-disabled:  #5d6475;
-@accent:         #3d7eff;
-@accent-hover:   #5a92ff;
-@accent-pressed: #2f68d8;
+@accent:         #4d8dff;
+@accent-hover:   #6aa1ff;
+@accent-pressed: #3a74e6;
 @accent-soft:    #1f2d4d;   /* disabled accent surface */
 @on-accent:      #ffffff;
 @success:        #3ddc84;
@@ -33,13 +33,21 @@
 /* Depth tokens (floating panels, window backdrop) */
 @bg-top:         #181c25;
 @bg-bottom:      #0e1015;
-@surface-top:    #222733;
-@surface-bottom: #1a1e27;
+@surface-top:    #a32a3350;   /* glass: #AARRGGBB, the 3D stage shows through */
+@surface-bottom: #8c141a2a;
 @shadow:         #70000000;
 @highlight:      #1affffff;
-@glow:           #3d7eff;
+@glow:           #4d8dff;
 @grid:           #3d7eff;
 @success-soft:   #15301f;
 @warning-soft:   #3a2f12;
 @danger-soft:    #3b1a1c;
 @accent-softer:  #1b2740;
+
+/* Glass tokens used by QSS (rgba so the stage shows through) */
+@glass-input:    rgba(6, 9, 18, 150);
+@glass-input-h:  rgba(10, 14, 26, 175);
+@glass-button:   rgba(255, 255, 255, 22);
+@glass-border:   rgba(255, 255, 255, 40);
+@accent-top:     #6aa1ff;
+@accent-bottom:  #3568de;
