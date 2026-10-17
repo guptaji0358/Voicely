@@ -17,6 +17,7 @@
 
 #include <QAction>
 #include <QAudioBufferOutput>
+#include <QAudioDevice>
 #include <QAudioOutput>
 #include <QCheckBox>
 #include <QCloseEvent>
@@ -26,6 +27,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -35,6 +37,7 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMediaDevices>
 #include <QMediaPlayer>
 #include <QMenu>
 #include <QMenuBar>
@@ -45,6 +48,7 @@
 #include <QScrollArea>
 #include <QSlider>
 #include <QStackedWidget>
+#include <QStandardItemModel>
 #include <QStandardPaths>
 #include <QStringDecoder>
 #include <QTabWidget>
@@ -90,6 +94,12 @@ QString hashOf(const QString &t) {
 
 }  // namespace
 
+// Follow the system default speaker: plugging in earphones (or switching device) must move the sound with it.
+static void useDefaultOutput(QAudioOutput *out) {
+    const QAudioDevice dev = QMediaDevices::defaultAudioOutput();
+    if (out && !dev.isNull() && out->device() != dev) out->setDevice(dev);
+}
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new ProtocolClient(this)) {
     const bool custom = Frameless::customFrameWanted();
     if (custom) {
@@ -111,6 +121,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
     m_previewOut = new QAudioOutput(this);
     m_previewPlayer->setAudioOutput(m_previewOut);
     buildUi();
+
+    auto *mediaDevices = new QMediaDevices(this);
+    connect(mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        useDefaultOutput(m_audioOut);
+        useDefaultOutput(m_previewOut);
+    });
 
     connect(m_client, &ProtocolClient::ready, this, &MainWindow::onReady);
     connect(m_client, &ProtocolClient::progress, this, &MainWindow::onProgress);
@@ -222,7 +238,7 @@ void MainWindow::buildActions() {
 
 void MainWindow::buildUi() {
     ThemeManager::instance().ensureApplied();
-    setWindowTitle("TTS Studio");
+    setWindowTitle("Voicely");
     setWindowIcon(Icons::icon("app-logo"));
     const bool custom = windowFlags().testFlag(Qt::FramelessWindowHint);
     setMinimumSize(custom ? 980 : 940, custom ? 700 : 660);
@@ -399,6 +415,14 @@ void MainWindow::buildUi() {
     r0->addWidget(m_voice, 1);
     r0->addWidget(m_preview);                 // speaker icon sits right beside the voice name
     vl->addLayout(r0);
+    m_voiceInfoLabel = new QLabel;
+    m_voiceInfoLabel->setObjectName("voiceInfoLabel");
+    m_voiceInfoLabel->setProperty("small", true);
+    m_voiceInfoLabel->setWordWrap(true);
+    vl->addWidget(m_voiceInfoLabel);
+    connect(m_voice, &QComboBox::currentIndexChanged, this, [this] {
+        m_voiceInfoLabel->setText(m_voiceInfo.value(m_voice->currentData().toString()));
+    });
     vl->addWidget(group("Backend:", m_backend));
     m_optRow = new QWidget;
     auto *r1 = new QVBoxLayout(m_optRow);
@@ -825,15 +849,50 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         if (status == "success") {
             m_caps = r;
             m_voice->clear();
-            for (const auto &v : r.value("voices").toArray()) {
-                const QJsonObject o = v.toObject();
-                const QString name = o.value("name").toString();
-                m_voice->addItem(name == "original" ? QStringLiteral("Original Voice") : name, name);
-                m_voice->setItemData(m_voice->count() - 1, o.value("description").toString() + "\n" + o.value("kind").toString(),
-                                     Qt::ToolTipRole);
+            m_voiceSamples.clear();
+            m_voiceInfo.clear();
+            // Voice library: grouped like other voice platforms (Classic / Girls / Boys), friendly names, stored samples.
+            struct Group { const char *title; QString gender; bool classic; };
+            const QList<Group> groups{{"Classic voices", {}, true}, {"Girls", "female", false}, {"Boys", "male", false}};
+            const auto isClassic = [](const QString &n) {
+                return n == "original" || n == "reference" || n == "deep" || n == "boy";
+            };
+            auto *model = qobject_cast<QStandardItemModel *>(m_voice->model());
+            for (const Group &g : groups) {
+                bool headerAdded = false;
+                for (const auto &v : r.value("voices").toArray()) {
+                    const QJsonObject o = v.toObject();
+                    const QString name = o.value("name").toString();
+                    const bool inGroup = g.classic ? isClassic(name)
+                                                   : (!isClassic(name) && o.value("gender").toString() == g.gender);
+                    if (!inGroup) continue;
+                    if (!headerAdded && model) {
+                        m_voice->addItem(QString(g.title).toUpper());
+                        if (QStandardItem *h = model->item(m_voice->count() - 1)) {
+                            h->setFlags(Qt::NoItemFlags);                 // a label, not a choice
+                            QFont f = h->font();
+                            f.setBold(true);
+                            f.setPointSizeF(f.pointSizeF() * 0.85);
+                            h->setFont(f);
+                        }
+                        headerAdded = true;
+                    }
+                    const QString display = o.value("display_name").toString(name);
+                    const QString tag = o.value("tagline").toString();
+                    m_voice->addItem(display, name);
+                    m_voice->setItemData(m_voice->count() - 1,
+                                         display + " — " + tag + "\n" + o.value("description").toString() + "\n" +
+                                             o.value("kind").toString(),
+                                         Qt::ToolTipRole);
+                    m_voiceSamples.insert(name, o.value("sample_path").toString());
+                    const QString who = o.value("gender").toString() == "female" ? "Female"
+                                        : o.value("gender").toString() == "male" ? "Male" : QString();
+                    m_voiceInfo.insert(name, who.isEmpty() ? tag : who + "  ·  " + tag);
+                }
             }
             const int i = m_voice->findData("original");
             if (i >= 0) m_voice->setCurrentIndex(i);
+            m_voiceInfoLabel->setText(m_voiceInfo.value(m_voice->currentData().toString()));
             if (m_backend->count() > 0) backendChanged();
             updatePreviewUi();
         }
@@ -864,7 +923,7 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         case Job::Preview:
             loadPreview(r.value("output_path").toString());
             setStatus(QString("Voice preview generated (%1 s).").arg(r.value("duration_s").toDouble(), 0, 'f', 1));
-            m_previewPlayer->play();
+            { useDefaultOutput(m_previewOut); m_previewPlayer->play(); }
             break;
         case Job::Recheck: {
             m_qa->setBusy(false);
@@ -1033,9 +1092,21 @@ void MainWindow::onPreviewClicked() {
         stopPreview();
         setStatus("Preview stopped.");
         break;
-    case PreviewButton::Mode::Idle:
-        generate(true);
+    case PreviewButton::Mode::Idle: {
+        // Stored sample (rendered once, shipped with the app) -> instant, no run-time synthesis.
+        // Only valid for the local backend those samples were made with; other backends synthesize live.
+        const QString sample = m_voiceSamples.value(m_voice->currentData().toString());
+        if (m_state == State::Idle && m_backend->currentData().toString() == "local" && !sample.isEmpty() &&
+            QFile::exists(sample)) {
+            releasePreviewFile();
+            if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
+            m_previewPlayer->setSource(QUrl::fromLocalFile(sample));   // m_previewPath stays empty: never deleted
+            { useDefaultOutput(m_previewOut); m_previewPlayer->play(); }
+        } else {
+            generate(true);
+        }
         break;
+    }
     }
 }
 
@@ -1107,7 +1178,7 @@ void MainWindow::saveWav() {
 void MainWindow::togglePlay() {
     if (m_audioPath.isEmpty()) return;
     if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
-    else m_player->play();
+    else { useDefaultOutput(m_audioOut); m_player->play(); }
 }
 
 void MainWindow::stopPlay() {
@@ -1183,7 +1254,7 @@ void MainWindow::onReplay(int chunk) {
         if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
         m_previewPlayer->stop();
         m_previewPlayer->setSource(QUrl::fromLocalFile(r.value("path").toString()));
-        m_previewPlayer->play();
+        { useDefaultOutput(m_previewOut); m_previewPlayer->play(); }
         setStatus("Replaying chunk " + QString::number(r.value("chunk").toInt() + 1) + ".");
     });
 }

@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QMainWindow>
+#include <QMap>
 #include <QPair>
 #include <QPointer>
 #include <QProcessEnvironment>
@@ -137,7 +138,8 @@ private:
     QList<Card *> m_cards;
     bool m_entrancePlayed = false;
     StateIcon *m_dot, *m_busy;
-    QLabel *m_title, *m_status, *m_counts, *m_outLabel, *m_time, *m_voiceNote, *m_textBadge;
+    QLabel *m_title, *m_status, *m_counts, *m_outLabel, *m_time, *m_voiceNote, *m_textBadge, *m_voiceInfoLabel;
+    QMap<QString, QString> m_voiceSamples, m_voiceInfo;   // voice -> stored sample path / "Female · tagline"
     QPushButton *m_settingsBtn, *m_import, *m_clear, *m_paste, *m_generate, *m_play, *m_stop,
         *m_saveMp3, *m_saveWav, *m_cancel, *m_checkText, *m_verOriginal, *m_verRepaired;
     QCheckBox *m_precheck;

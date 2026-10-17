@@ -1,6 +1,7 @@
-"""Assemble a standalone Windows folder:   dist/TTSStudio/
+"""Assemble a standalone Windows folder:   dist/Voicely/
 
-    TTSStudio.exe + Qt DLLs/plugins   (windeployqt)
+    Voicely.exe                     tiny launcher (packaging/launcher.cpp): puts DLLs/ on the DLL search path, starts the app
+    DLLs/                             the real app (Voicely-app.exe) + Qt/MinGW/ffmpeg DLLs + Qt plugins   (windeployqt)
     python/                           private CPython runtime (copied from the Python that runs this script) with ONLY the
                                       packages the worker needs (dependency closure computed from package metadata)
     engine/speech_engine/             the Python package (no tests, no caches)
@@ -99,9 +100,9 @@ def copy_runtime(dest: Path) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--build", default=str(ROOT / "gui" / "build"), help="CMake build folder containing TTSStudio.exe")
+    ap.add_argument("--build", default=str(ROOT / "gui" / "build"), help="CMake build folder containing Voicely.exe")
     ap.add_argument("--qt", default=os.environ.get("QT_ROOT", ""), help="Qt kit folder (contains bin/windeployqt.exe)")
-    ap.add_argument("--out", default=str(ROOT / "dist" / "TTSStudio"))
+    ap.add_argument("--out", default=str(ROOT / "dist" / "Voicely"))
     ap.add_argument("--with-google", action="store_true")
     ap.add_argument("--with-asr", action="store_true")
     ap.add_argument("--with-lab", action="store_true")
@@ -111,7 +112,7 @@ def main() -> int:
     a = ap.parse_args()
 
     build, out = Path(a.build), Path(a.out)
-    exe = build / "TTSStudio.exe"
+    exe = build / "Voicely.exe"
     if not exe.is_file():
         sys.exit(f"{exe} not found - build the GUI first (cmake --build gui/build)")
     windeploy = Path(a.qt) / "bin" / "windeployqt.exe" if a.qt else Path(shutil.which("windeployqt") or "")
@@ -121,11 +122,19 @@ def main() -> int:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    print("1/4 application + Qt (windeployqt)")
-    shutil.copy2(exe, out / "TTSStudio.exe")
+    print("1/4 application + Qt (windeployqt) -> DLLs/, launcher -> Voicely.exe")
+    libs = out / "DLLs"
+    libs.mkdir()
+    shutil.copy2(exe, libs / "Voicely-app.exe")
     env = dict(os.environ, PATH=str(windeploy.parent) + os.pathsep + os.environ["PATH"])
     subprocess.run([str(windeploy), "--no-translations", "--no-system-d3d-compiler", "--no-opengl-sw", "--compiler-runtime",
-                    str(out / "TTSStudio.exe")], check=True, env=env)
+                    str(libs / "Voicely-app.exe")], check=True, env=env)
+    gxx = Path(a.qt) / ".." / ".." / "Tools" / "mingw1310_64" / "bin" / "g++.exe"
+    cxx = str(gxx.resolve()) if gxx.is_file() else shutil.which("g++")
+    if not cxx:
+        sys.exit("g++ not found (needed to build the launcher): put MinGW g++ on PATH")
+    subprocess.run([cxx, "-O2", "-s", "-municode", "-mwindows", "-static", str(ROOT / "packaging" / "launcher.cpp"),
+                    "-o", str(out / "Voicely.exe")], check=True)
 
     print("2/4 engine")
     shutil.copytree(ROOT / "speech_engine", out / "engine" / "speech_engine",
@@ -157,8 +166,8 @@ def main() -> int:
 
     print("4/4 notes")
     (out / "README-dist.txt").write_text(
-        "TTS Studio (standalone folder)\n\n"
-        "Run TTSStudio.exe. It uses ./python and ./engine automatically.\n"
+        "Voicely (standalone folder)\n\n"
+        "Run Voicely.exe. It uses ./python and ./engine automatically.\n"
         "First run: Kokoro model files are downloaded on request (about 310 MB, or ~80 MB int8) to %LOCALAPPDATA%\\speech_engine\\models.\n"
         "Recheck Speech needs the faster-whisper package in ./python and a recognition model (Settings > Pronunciation > Download).\n"
         "Nothing is uploaded; AI suggestions are off until you enable them.\n"

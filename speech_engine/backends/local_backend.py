@@ -11,6 +11,7 @@ single shipped voice. It is not a trained voice.
 from __future__ import annotations
 
 import os
+import re
 import threading
 import urllib.request
 from pathlib import Path
@@ -181,6 +182,17 @@ class LocalBackend(Backend):
             out.append(k.tokenizer.phonemize(tail, lang).strip())
         return " ".join(p for p in out if p)
 
+    # The text normaliser writes the acronym "AI" as "A.I". Kokoro's own phonemes for it ("ˈeɪ.ˈaɪ") are heard as
+    # "eight eye", so the letter names are given directly. A chunk that is nothing but the acronym is too short for
+    # the model to anchor the first vowel ("day I"), so a comma is added there (checked with speech recognition).
+    _AI = re.compile(r"(?<!\w)A\.I(?!\w)", re.IGNORECASE)
+    _AI_ALONE = re.compile(r"\W*A\.I\W*", re.IGNORECASE)
+
+    def _builtin_overrides(self, text: str, lang: str) -> tuple:
+        if not (lang or "").lower().startswith("en") or not self._AI.search(text):
+            return ()
+        return (("A.I", "ˈeɪ, ˈaɪ" if self._AI_ALONE.fullmatch(text) else "ˈeɪ ˈaɪ"),)
+
     def list_voices(self) -> list[str]:
         try:
             return list(self._load().get_voices())
@@ -197,8 +209,9 @@ class LocalBackend(Backend):
             k = self._load()
             style = self._style(k, profile)
             try:
-                use_ph = bool(params.overrides)
-                payload = self._phonemes_with_overrides(k, text, params.overrides, profile.local_lang) if use_ph else text
+                overrides = tuple(params.overrides) + self._builtin_overrides(text, profile.local_lang)
+                use_ph = bool(overrides)
+                payload = self._phonemes_with_overrides(k, text, overrides, profile.local_lang) if use_ph else text
                 samples, rate = k.create(
                     payload, voice=style,
                     speed=(params.speed or profile.speed) / ratio,

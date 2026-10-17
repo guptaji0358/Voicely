@@ -173,7 +173,10 @@ class Worker(QAMixin):
     def capabilities(self, rid):
         from .voice_profiles import load_profiles
         profiles = load_profiles()
+        samples = Path(__file__).resolve().parent / "voice_samples"
         voices = [{"name": n, "description": p.description, "speed": p.speed,
+                   "gender": p.gender, "display_name": p.display_name or n, "tagline": p.tagline,
+                   "sample_path": str(samples / f"{n}.wav") if (samples / f"{n}.wav").is_file() else "",
                    "kind": "prompt/config-defined profile (not a trained model)"}
                   for n, p in sorted(profiles.items())]
         backends = {"local": {"languages": LANGUAGES, "speed": True, "style": False, "network": False},

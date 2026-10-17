@@ -72,6 +72,11 @@ h = eng.speak_async(text)   # non-blocking; a new call interrupts the previous o
 h.cancel(); eng.close()
 ```
 
+## Voice library and stored previews
+
+24 built-in voices: 4 classic (`original`, `reference`, `deep`, `boy`), 10 girls (`girl_*`) and 10 boys (`boy_*`), grouped in the dropdown. Metadata (`gender`, `display_name`, `tagline`) lives on each profile in `speech_engine/voice_profiles.py`.
+The speaker button plays a stored clip from `speech_engine/voice_samples/<voice>.wav` (local backend) instead of synthesizing. After changing a profile, regenerate with `python packaging/make_voice_samples.py --force --only <voice>`.
+
 ## Tuning the voice
 Copy a profile into a JSON file and pass `--profiles-file` (or `SPEECH_ENGINE_PROFILES`):
 `{"original": {"local_blend": {"af_heart": 0.6, "bf_emma": 0.4}, "speed": 0.95}}`. Run `evaluate --output-dir` and listen.
@@ -115,7 +120,7 @@ cd build && ctest --output-on-failure     # protocol + GUI tests (mock backend; 
 Adjust the Qt/compiler paths to your install (use Qt's own MinGW, not an unrelated g++). Python tests: `python -m pytest`.
 
 ## Launch
-Double-click `gui/build/TTSStudio.exe` (needs the Qt `bin` folder on PATH, or run `cmake --build build --target deploy` once to copy the Qt DLLs/plugins next to it).
+Double-click `gui/build/Voicely.exe` (needs the Qt `bin` folder on PATH, or run `cmake --build build --target deploy` once to copy the Qt DLLs/plugins next to it).
 Python is found via Settings > `TTS_PYTHON` > `<app>/python/python.exe` > PATH; the engine via Settings > `TTS_ENGINE_ROOT` > a `speech_engine` folder at/above or in `engine/` beside the exe. Python needs `pip install -r requirements.txt` (+ `python -m speech_engine.cli download-model --yes` for the local voice).
 
 ## Packaging plan
@@ -157,16 +162,16 @@ Not done: Windows 11 Snap Layouts flyout on the maximize button (needs `WM_NCHIT
 ```bash
 cd gui && cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH=D:/Apps/Qt6/6.11.1/mingw_64 -DCMAKE_BUILD_TYPE=Release
 cmake --build build
-build/TTSStudio.exe
+build/Voicely.exe
 ctest --test-dir build --output-on-failure        # Qt tests (offscreen) + pytest backend tests
 ```
-Developer aid: `TTS_SNAPSHOT=file.png TTSStudio.exe` renders the window and exits (`TTS_TEST_SNAPSHOT_DIR` does the same inside `tst_qa_gui`).
+Developer aid: `TTS_SNAPSHOT=file.png Voicely.exe` renders the window and exits (`TTS_TEST_SNAPSHOT_DIR` does the same inside `tst_qa_gui`).
 
 ### Standalone folder (tested)
 ```bash
 python packaging/make_dist.py --build gui/build --qt D:/Apps/Qt6/6.11.1/mingw_64 --verify [--with-google] [--with-asr] [--no-scipy]
 ```
-Creates `dist/TTSStudio/` (TTSStudio.exe + Qt via windeployqt, `engine/`, and a private `python/` runtime containing only the dependency closure of
+Creates `dist/Voicely/` (Voicely.exe + Qt via windeployqt, `engine/`, and a private `python/` runtime containing only the dependency closure of
 kokoro-onnx, lameenc, numpy, scipy). PyTorch, sounddevice, pytest and models are not included; Kokoro and the ASR model are fetched on request.
 `--verify` runs `packaging/verify_dist.py` in a clean environment (no system Python/Qt on PATH): runtime imports, worker protocol 2 actions, real local
 synthesis if the Kokoro model exists, MP3 export, and a real launch of the exe. Not done: an installer (Inno Setup/NSIS/WiX) and code signing.

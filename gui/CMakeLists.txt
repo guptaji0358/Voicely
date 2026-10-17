@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(TTSStudio LANGUAGES CXX)
+project(Voicely LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,8 +20,8 @@ if(WIN32)
   target_link_libraries(ttscore PUBLIC shell32)
 endif()
 
-add_executable(TTSStudio WIN32 src/main.cpp)
-target_link_libraries(TTSStudio PRIVATE ttscore)
+add_executable(Voicely WIN32 src/main.cpp)
+target_link_libraries(Voicely PRIVATE ttscore)
 
 # ---- tests ---------------------------------------------------------------
 enable_testing()
@@ -52,5 +52,5 @@ endif()
 # ---- deployment helper: cmake --build . --target deploy ----------------------
 find_program(WINDEPLOYQT windeployqt HINTS "${_qtbin}")
 if(WINDEPLOYQT)
-  add_custom_target(deploy COMMAND ${WINDEPLOYQT} --no-translations $<TARGET_FILE:TTSStudio> DEPENDS TTSStudio)
+  add_custom_target(deploy COMMAND ${WINDEPLOYQT} --no-translations $<TARGET_FILE:Voicely> DEPENDS Voicely)
 endif()

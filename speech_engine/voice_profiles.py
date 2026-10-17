@@ -32,6 +32,10 @@ class VoiceProfile:
     description: str = ""
     # --- design intent (documentation only; not an acoustic guarantee) ---
     character: str = ""
+    # --- voice-library metadata (UI grouping/labels only; no effect on synthesis) ---
+    gender: str = ""          # "female" | "male" | "" (unspecified)
+    display_name: str = ""    # friendly label; falls back to ``name``
+    tagline: str = ""         # short style tag shown next to the name, e.g. "Warm · Narration"
     # --- local (Kokoro) controls ---
     local_blend: dict[str, float] = field(default_factory=dict)  # voice -> weight
     local_lang: str = "en-us"
@@ -115,7 +119,88 @@ BOY = VoiceProfile(
                  "clear, with playful intonation. Keep it natural and wholesome.",
 )
 
-BUILTIN: dict[str, VoiceProfile] = {p.name: p for p in (ORIGINAL, REFERENCE, DEEP, BOY)}
+def _extra(name, description, blend, google_voice, google_style, *, lang="en-us",
+           speed=1.0, pitch=0.0) -> VoiceProfile:
+    return VoiceProfile(name=name, description=description, local_blend=blend, local_lang=lang,
+                        speed=speed, pitch_semitones=pitch, google_voice=google_voice,
+                        google_style=google_style)
+
+
+# 10 girl + 10 boy voices. Like ``original`` these are blends of stock Kokoro voices
+# (plus speed/pitch) on the local backend and prebuilt Gemini voices + a style
+# instruction on the google backend; none is a newly trained voice.
+GIRLS = (
+    _extra("girl_bella", "Bright, friendly young woman.", {"af_bella": 1.0}, "Kore",
+           "Speak in a bright, friendly, upbeat tone."),
+    _extra("girl_sarah", "Soft, warm and gentle.", {"af_sarah": 0.7, "af_nicole": 0.3}, "Leda",
+           "Speak softly and warmly, gentle and reassuring.", speed=0.97),
+    _extra("girl_sky", "Light, airy and quick.", {"af_sky": 0.6, "af_aoede": 0.4}, "Aoede",
+           "Speak in a light, airy, lively manner.", speed=1.05),
+    _extra("girl_nova", "Clear, modern, confident.", {"af_nova": 0.7, "af_river": 0.3}, "Zephyr",
+           "Speak clearly and confidently, like a modern presenter."),
+    _extra("girl_jessica", "Expressive storyteller.", {"af_jessica": 1.0}, "Callirrhoe",
+           "Speak expressively, like a storyteller, with varied intonation.", speed=1.02),
+    _extra("girl_kore", "Calm, composed, professional.", {"af_kore": 0.6, "af_alloy": 0.4}, "Autonoe",
+           "Speak calmly and professionally at an even pace.", speed=0.98),
+    _extra("girl_alice", "British, crisp and polite.", {"bf_alice": 0.6, "bf_lily": 0.4}, "Despina",
+           "Speak with a crisp, polite British manner.", lang="en-gb"),
+    _extra("girl_isabella", "British, elegant and slow.", {"bf_isabella": 1.0}, "Erinome",
+           "Speak elegantly and unhurriedly with a British accent.", lang="en-gb", speed=0.95),
+    _extra("girl_emma", "British, warm narrator.", {"bf_emma": 1.0}, "Laomedeia",
+           "Speak as a warm British narrator.", lang="en-gb", speed=0.97),
+    _extra("girl_young", "Young-sounding girl (approximation; Kokoro has no child voices).",
+           {"af_sky": 0.5, "af_bella": 0.5}, "Achernar",
+           "Speak like a cheerful, curious young girl: bright, lively and clear.",
+           speed=1.04, pitch=2.0),
+)
+BOYS = (
+    _extra("boy_liam", "Friendly, natural young man.", {"am_liam": 1.0}, "Puck",
+           "Speak in a friendly, natural, upbeat tone."),
+    _extra("boy_eric", "Steady, clear and neutral.", {"am_eric": 1.0}, "Orus",
+           "Speak clearly and steadily in a neutral tone."),
+    _extra("boy_michael", "Warm, mature and reassuring.", {"am_michael": 0.7, "am_echo": 0.3},
+           "Charon", "Speak warmly and reassuringly like an experienced presenter.", speed=0.97),
+    _extra("boy_echo", "Smooth, relaxed.", {"am_echo": 1.0}, "Enceladus",
+           "Speak in a smooth, relaxed, conversational manner."),
+    _extra("boy_fenrir", "Deep, strong, dramatic.", {"am_fenrir": 0.6, "am_onyx": 0.4}, "Fenrir",
+           "Speak in a deep, strong, dramatic voice.", speed=0.95),
+    _extra("boy_adam", "Calm, grounded narrator.", {"am_adam": 0.5, "am_michael": 0.5}, "Iapetus",
+           "Speak calmly and grounded, like a documentary narrator.", speed=0.94),
+    _extra("boy_daniel", "British, polished.", {"bm_daniel": 1.0}, "Umbriel",
+           "Speak in a polished British manner.", lang="en-gb"),
+    _extra("boy_fable", "British, expressive storyteller.", {"bm_fable": 0.6, "bm_lewis": 0.4},
+           "Algieba", "Speak as an expressive British storyteller.", lang="en-gb"),
+    _extra("boy_george", "British, deep and authoritative.", {"bm_george": 1.0}, "Rasalgethi",
+           "Speak in a deep, authoritative British voice.", lang="en-gb", speed=0.95),
+    _extra("boy_teen", "Teenage-sounding boy (approximation; Kokoro has no child voices).",
+           {"am_puck": 0.5, "am_eric": 0.5}, "Algenib",
+           "Speak like an energetic teenage boy: lively, casual and clear.",
+           speed=1.05, pitch=2.0),
+)
+
+# name -> (gender, display name, tagline). The girl_*/boy_* names derive their label automatically.
+_META = {
+    "original": ("female", "Original Voice", "Warm, refined narrator"),
+    "reference": ("female", "Reference", "Neutral, for comparison"),
+    "deep": ("male", "Deep Narrator", "Calm documentary narrator"),
+    "boy": ("male", "Young Boy", "Youthful and energetic"),
+    "girl_young": ("female", "Young Girl", "Youthful, bright (approximation)"),
+    "boy_teen": ("male", "Teen Boy", "Teenage, energetic (approximation)"),
+}
+
+
+def _with_meta(p: VoiceProfile) -> VoiceProfile:
+    if p.name in _META:
+        g, disp, tag = _META[p.name]
+    else:
+        prefix, _, rest = p.name.partition("_")
+        g = {"girl": "female", "boy": "male"}.get(prefix, "")
+        disp, tag = rest.capitalize(), p.description.rstrip(".")
+    return replace(p, gender=g, display_name=disp, tagline=tag)
+
+
+BUILTIN: dict[str, VoiceProfile] = {
+    p.name: p for p in map(_with_meta, (ORIGINAL, REFERENCE, DEEP, BOY, *GIRLS, *BOYS))}
 
 
 def load_profiles(path: str | os.PathLike | None = None) -> dict[str, VoiceProfile]:

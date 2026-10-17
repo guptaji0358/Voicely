@@ -40,8 +40,11 @@ inline QString findPython() {
     if (!cfg.isEmpty()) return cfg;
     const QString env = qEnvironmentVariable("TTS_PYTHON");
     if (!env.isEmpty()) return env;
-    const QString bundled = QCoreApplication::applicationDirPath() + "/python/python.exe";
-    if (QFileInfo::exists(bundled)) return bundled;
+    // <app>/python beside the exe, or one level up when the exe lives in the packaged <app>/DLLs folder.
+    for (const char* rel : {"/python/python.exe", "/../python/python.exe"}) {
+        const QString bundled = QDir::cleanPath(QCoreApplication::applicationDirPath() + rel);
+        if (QFileInfo::exists(bundled)) return bundled;
+    }
     return QStandardPaths::findExecutable("python");
 }
 

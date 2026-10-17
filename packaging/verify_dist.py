@@ -1,11 +1,11 @@
-"""Smoke-test a dist/TTSStudio folder in a CLEAN environment (no system Python, no Qt on PATH, no PYTHONPATH):
+"""Smoke-test a dist/Voicely folder in a CLEAN environment (no system Python, no Qt on PATH, no PYTHONPATH):
 
   1. the bundled python.exe imports every runtime dependency and the worker module;
   2. the bundled worker answers health / analyze_text / a session synthesis (mock backend) / recheck (mock ASR) /
      dictionary / feedback-consent / llm_status over protocol 2;
-  3. TTSStudio.exe starts (offscreen), finds the bundled python + engine by itself and renders a window snapshot.
+  3. Voicely.exe starts (offscreen), finds the bundled python + engine by itself and renders a window snapshot.
 
-Usage: python packaging/verify_dist.py dist/TTSStudio
+Usage: python packaging/verify_dist.py dist/Voicely
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def clean_env(extra: dict | None = None) -> dict:
 
 
 def main(dist: Path) -> int:
-    py, engine, exe = dist / "python" / "python.exe", dist / "engine", dist / "TTSStudio.exe"
+    py, engine, exe = dist / "python" / "python.exe", dist / "engine", dist / "Voicely.exe"
     ok = True
 
     def check(name: str, cond: bool, detail: str = "") -> None:
@@ -119,11 +119,11 @@ def main(dist: Path) -> int:
     # real "windows" platform plugin (the one that ships): the window is visible for a few seconds, then the app exits itself
     env = clean_env({"TTS_SNAPSHOT": str(shot), "SPEECH_ENGINE_DATA_DIR": str(data), "SPEECH_ENGINE_ALLOW_MOCK": "1"})
     r = subprocess.run([str(exe)], cwd=work, env=env, capture_output=True, text=True, timeout=120)
-    check("TTSStudio.exe starts without Qt/Python on PATH and renders", r.returncode == 0 and shot.is_file() and shot.stat().st_size > 5000,
+    check("Voicely.exe starts without Qt/Python on PATH and renders", r.returncode == 0 and shot.is_file() and shot.stat().st_size > 5000,
           (r.stderr or "")[-300:])
     print("\nALL CHECKS PASSED" if ok else "\nSOME CHECKS FAILED")
     return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main(Path(sys.argv[1] if len(sys.argv) > 1 else "dist/TTSStudio").resolve()))
+    sys.exit(main(Path(sys.argv[1] if len(sys.argv) > 1 else "dist/Voicely").resolve()))

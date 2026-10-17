@@ -206,7 +206,7 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     h->setContentsMargins(14, 0, 0, 0);
     h->setSpacing(10);
     auto *logo = new IconWidget("app-logo", "", 20);
-    m_name = new QLabel("TTS Studio");
+    m_name = new QLabel("Voicely");
     m_name->setObjectName("appName");
     m_state = new StateIcon(14);
     m_chip = new QLabel("Starting…");

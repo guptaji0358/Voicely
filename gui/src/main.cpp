@@ -13,11 +13,11 @@
 int main(int argc, char *argv[]) {
 #ifdef Q_OS_WIN
     // Own taskbar identity (grouping, pinning, jump list) instead of inheriting python.exe / the host's.
-    SetCurrentProcessExplicitAppUserModelID(L"TTSStudio.App");
+    SetCurrentProcessExplicitAppUserModelID(L"Voicely.App");
 #endif
     QApplication app(argc, argv);                       // Qt 6: per-monitor high-DPI scaling is on by default
-    QApplication::setApplicationName("TTS Studio");
-    QApplication::setApplicationDisplayName("TTS Studio");
+    QApplication::setApplicationName("Voicely");
+    QApplication::setApplicationDisplayName("Voicely");
     QApplication::setOrganizationName("TTSStudio");
     QApplication::setWindowIcon(Icons::icon("app-logo"));
     MainWindow w;

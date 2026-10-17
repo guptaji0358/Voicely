@@ -27,6 +27,9 @@ _ABBREV = {
     r"\bDr\.": "Doctor", r"\bMr\.": "Mister", r"\bMrs\.": "Missus",
     r"\bMs\.": "Ms", r"\bProf\.": "Professor", r"\be\.g\.": "for example",
     r"\bi\.e\.": "that is", r"\betc\.": "et cetera", r"\bvs\.": "versus",
+    # Kokoro reads plain "AI" with a weak, clipped first letter; "A.I" gives a clear "ay eye" (no sentence split,
+    # unlike "A.I."; and "A I" would make the first letter the article "uh").
+    r"\b(?:AI|Ai)\b(?!\.\w)": "A.I",
 }
 # Periods inside these must not end a sentence once expanded; we expand first.
 
