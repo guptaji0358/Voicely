@@ -81,26 +81,29 @@ def resample(chunk: AudioChunk, target_rate: int) -> AudioChunk:
 
 
 def time_stretch(chunk: AudioChunk, speed: float, frame_ms: int = 40) -> AudioChunk:
-    """Change tempo without changing pitch (WSOLA). ``speed`` > 1 is faster. Used for backends with no native speed."""
+    """Change tempo without changing pitch (WSOLA). ``speed`` > 1 is faster. Used for backends with no native speed.
+
+    75 % overlapped Hann frames with a normalised cross-correlation search keep voiced sounds smooth; with 50 % overlap
+    and a plain dot product slowed speech sounds buzzy / robotic.
+    """
     if not chunk.pcm or abs(speed - 1.0) < 0.01:
         return chunk
     if not 0.25 <= speed <= 4.0:
         raise InvalidInputError("speed must be between 0.25 and 4.0")
     x = np.frombuffer(chunk.pcm, "<i2").astype(np.float32)
-    n = int(chunk.sample_rate * frame_ms / 1000) // 2 * 2
-    hop_out = n // 2
+    n = int(chunk.sample_rate * frame_ms / 1000) // 4 * 4
+    hop_out = n // 4
     hop_in = hop_out * speed
-    tol = n // 4
+    tol = n // 3
     if len(x) < n * 2:
         return chunk
-    win = np.hanning(n).astype(np.float32)
+    win = np.hanning(n + 1)[:n].astype(np.float32)          # periodic Hann: overlap-adds to a constant at 75 %
     frames = int((len(x) - n - tol) / hop_in) + 1
     out = np.zeros(frames * hop_out + n, np.float32)
     norm = np.zeros_like(out)
-    prev = x[:n]
-    o, pos = 0, 0
-    out[:n] += prev * win
+    out[:n] += x[:n] * win
     norm[:n] += win
+    o, pos = 0, 0
     for i in range(1, frames):
         # what naturally follows the previously chosen segment is the best-matching target
         target = x[pos + hop_out: pos + hop_out + n]
@@ -109,11 +112,11 @@ def time_stretch(chunk: AudioChunk, speed: float, frame_ms: int = 40) -> AudioCh
         if hi <= lo or len(target) < n:
             break
         cand = np.lib.stride_tricks.sliding_window_view(x[lo:hi + n], n)[::2]
-        k = int(np.argmax(cand @ target)) * 2
+        energy = np.einsum("ij,ij->i", cand, cand) + 1e-3 * n
+        k = int(np.argmax((cand @ target) / np.sqrt(energy))) * 2
         pos = lo + k
-        seg = x[pos: pos + n]
         o = i * hop_out
-        out[o:o + n] += seg * win
+        out[o:o + n] += x[pos: pos + n] * win
         norm[o:o + n] += win
     end = o + n
     y = out[:end] / np.maximum(norm[:end], 1e-3)
