@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..audio_pipeline import float_to_pcm16, resample
+from ..audio_pipeline import float_to_pcm16, resample, time_stretch
 from ..exceptions import (BackendUnavailableError, ConfigurationError, SynthesisCancelled,
                           SynthesisError)
 from ..voice_profiles import VoiceProfile
@@ -265,6 +265,8 @@ class LocalBackend(Backend):
     # The text normaliser writes the acronym "AI" as "A.I". Kokoro's own phonemes for it ("ˈeɪ.ˈaɪ") are heard as
     # "eight eye", so the letter names are given directly. A chunk that is nothing but the acronym is too short for
     # the model to anchor the first vowel ("day I"), so a comma is added there (checked with speech recognition).
+    _MIN_NATIVE_SPEED = 0.85
+
     _AI = re.compile(r"(?<!\w)A\.I(?!\w)", re.IGNORECASE)
     _AI_ALONE = re.compile(r"\W*A\.I\W*", re.IGNORECASE)
 
@@ -292,9 +294,13 @@ class LocalBackend(Backend):
                 overrides = tuple(params.overrides) + self._builtin_overrides(text, profile.local_lang)
                 use_ph = bool(overrides)
                 payload = self._phonemes_with_overrides(k, text, overrides, profile.local_lang) if use_ph else text
+                # Kokoro's duration model glitches (repeats the first sound) below ~0.85x, so slower speech is produced at the
+                # model's floor and the remainder is applied as a pitch-preserving time stretch afterwards.
+                want = (params.speed or profile.speed) / ratio
+                native = min(max(want, self._MIN_NATIVE_SPEED), 2.0)
                 samples, rate = k.create(
                     payload, voice=style,
-                    speed=(params.speed or profile.speed) / ratio,
+                    speed=native,
                     lang=profile.local_lang,
                     is_phonemes=use_ph,
                     sentence_pause=profile.sentence_pause,
@@ -305,6 +311,8 @@ class LocalBackend(Backend):
         if samples is None or len(samples) == 0:
             raise SynthesisError("local backend produced no audio for this chunk")
         chunk = AudioChunk(float_to_pcm16(samples), int(rate))
+        if want < native - 0.005:
+            chunk = time_stretch(chunk, want / native)
         if ratio != 1.0:
             shortened = resample(chunk, int(chunk.sample_rate / ratio))
             chunk = AudioChunk(shortened.pcm, chunk.sample_rate)

@@ -80,6 +80,46 @@ def resample(chunk: AudioChunk, target_rate: int) -> AudioChunk:
     return AudioChunk(np.clip(np.rint(y), -32768, 32767).astype("<i2").tobytes(), target_rate)
 
 
+def time_stretch(chunk: AudioChunk, speed: float, frame_ms: int = 40) -> AudioChunk:
+    """Change tempo without changing pitch (WSOLA). ``speed`` > 1 is faster. Used for backends with no native speed."""
+    if not chunk.pcm or abs(speed - 1.0) < 0.01:
+        return chunk
+    if not 0.25 <= speed <= 4.0:
+        raise InvalidInputError("speed must be between 0.25 and 4.0")
+    x = np.frombuffer(chunk.pcm, "<i2").astype(np.float32)
+    n = int(chunk.sample_rate * frame_ms / 1000) // 2 * 2
+    hop_out = n // 2
+    hop_in = hop_out * speed
+    tol = n // 4
+    if len(x) < n * 2:
+        return chunk
+    win = np.hanning(n).astype(np.float32)
+    frames = int((len(x) - n - tol) / hop_in) + 1
+    out = np.zeros(frames * hop_out + n, np.float32)
+    norm = np.zeros_like(out)
+    prev = x[:n]
+    o, pos = 0, 0
+    out[:n] += prev * win
+    norm[:n] += win
+    for i in range(1, frames):
+        # what naturally follows the previously chosen segment is the best-matching target
+        target = x[pos + hop_out: pos + hop_out + n]
+        centre = int(i * hop_in)
+        lo, hi = max(0, centre - tol), min(len(x) - n, centre + tol)
+        if hi <= lo or len(target) < n:
+            break
+        cand = np.lib.stride_tricks.sliding_window_view(x[lo:hi + n], n)[::2]
+        k = int(np.argmax(cand @ target)) * 2
+        pos = lo + k
+        seg = x[pos: pos + n]
+        o = i * hop_out
+        out[o:o + n] += seg * win
+        norm[o:o + n] += win
+    end = o + n
+    y = out[:end] / np.maximum(norm[:end], 1e-3)
+    return AudioChunk(np.clip(np.rint(y), -32768, 32767).astype("<i2").tobytes(), chunk.sample_rate)
+
+
 def crossfade_edges(chunk: AudioChunk, ms: int = 6) -> AudioChunk:
     """Tiny fade in/out to prevent clicks at chunk joins."""
     x = np.frombuffer(chunk.pcm, "<i2").astype(np.float32)
