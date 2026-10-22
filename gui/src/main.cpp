@@ -2,13 +2,49 @@
 #include "ui/Icons.h"
 
 #include <QApplication>
+#include <QLinearGradient>
+#include <QPainter>
 #include <QPixmap>
+#include <QScreen>
+#include <QSplashScreen>
 #include <QTimer>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
 #include <shobjidl.h>
 #endif
+
+// Start-up splash: drawn in code so it can appear before MainWindow (which spawns the speech engine) is built.
+static QPixmap makeSplashPixmap(qreal dpr) {
+    const QSize sz(460, 280);
+    QPixmap pm(sz * dpr);
+    pm.setDevicePixelRatio(dpr);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing | QPainter::SmoothPixmapTransform);
+    QLinearGradient g(0, 0, sz.width(), sz.height());
+    g.setColorAt(0, QColor("#14172a"));
+    g.setColorAt(1, QColor("#241a3f"));
+    p.setPen(QPen(QColor(255, 255, 255, 40), 1));
+    p.setBrush(g);
+    p.drawRoundedRect(QRectF(0.5, 0.5, sz.width() - 1, sz.height() - 1), 18, 18);
+    const QPixmap logo = Icons::icon("app-logo").pixmap(QSize(88, 88));
+    p.drawPixmap((sz.width() - 88) / 2, 44, logo);
+    QFont f = p.font();
+    f.setPointSize(24);
+    f.setWeight(QFont::DemiBold);
+    p.setFont(f);
+    p.setPen(QColor("#f2f3fa"));
+    p.drawText(QRect(0, 146, sz.width(), 40), Qt::AlignCenter, "Voicely");
+    f.setPointSize(10);
+    f.setWeight(QFont::Normal);
+    p.setFont(f);
+    p.setPen(QColor(255, 255, 255, 150));
+    p.drawText(QRect(0, 186, sz.width(), 24), Qt::AlignCenter, "Natural speech, on your machine");
+    p.setPen(QColor(255, 255, 255, 110));
+    p.drawText(QRect(0, 236, sz.width(), 24), Qt::AlignCenter, "Starting up…");
+    return pm;
+}
 
 int main(int argc, char *argv[]) {
 #ifdef Q_OS_WIN
@@ -20,8 +56,17 @@ int main(int argc, char *argv[]) {
     QApplication::setApplicationDisplayName("Voicely");
     QApplication::setOrganizationName("TTSStudio");
     QApplication::setWindowIcon(Icons::icon("app-logo"));
+    const bool snapshotRun = !qEnvironmentVariableIsEmpty("TTS_SNAPSHOT");
+    QSplashScreen splash(makeSplashPixmap(app.primaryScreen() ? app.primaryScreen()->devicePixelRatio() : 1.0),
+                         Qt::WindowStaysOnTopHint | Qt::FramelessWindowHint);
+    splash.setAttribute(Qt::WA_TranslucentBackground);
+    if (!snapshotRun) {
+        splash.show();
+        app.processEvents();            // paint it now; building the main window below can take a moment
+    }
     MainWindow w;
     w.show();
+    splash.finish(&w);
     // Developer aid: TTS_SNAPSHOT=<file.png> renders the window after start-up (and after TTS_SNAPSHOT_TEXT is typed
     // into the editor), saves it and exits. It is how UI screenshots are made without screen-capture permissions.
     const QString snap = qEnvironmentVariable("TTS_SNAPSHOT");

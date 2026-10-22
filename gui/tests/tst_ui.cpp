@@ -43,6 +43,7 @@ private slots:
         w->resize(1120, 780);
         w->show();
         waitState(MainWindow::State::Idle);
+        QTRY_VERIFY_WITH_TIMEOUT(get<QComboBox>("voiceCombo")->currentIndex() >= 0, 15000);   // capabilities reply fills the voices
         auto *be = get<QComboBox>("backendCombo");
         be->setCurrentIndex(be->findData("mock"));
     }

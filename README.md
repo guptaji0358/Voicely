@@ -75,7 +75,7 @@ h.cancel(); eng.close()
 ## Voice library and stored previews
 
 24 built-in voices: 4 classic (`original`, `reference`, `deep`, `boy`), 10 girls (`girl_*`) and 10 boys (`boy_*`), grouped in the dropdown. Metadata (`gender`, `display_name`, `tagline`) lives on each profile in `speech_engine/voice_profiles.py`.
-The speaker button plays a stored clip from `speech_engine/voice_samples/<voice>.wav` (local backend) instead of synthesizing. After changing a profile, regenerate with `python packaging/make_voice_samples.py --force --only <voice>`.
+The speaker button plays a stored clip from `speech_engine/voice_samples/<voice>.mp3` (any backend, never a cloud call) instead of synthesizing. After changing a profile, regenerate with `python packaging/make_voice_samples.py --force --only <voice>`.
 
 ## Tuning the voice
 Copy a profile into a JSON file and pass `--profiles-file` (or `SPEECH_ENGINE_PROFILES`):

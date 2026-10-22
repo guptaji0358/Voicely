@@ -178,6 +178,53 @@ BOYS = (
            speed=1.05, pitch=2.0),
 )
 
+# Second batch (10 girls + 10 boys). Uses the Kokoro voices the first batch left out - Hindi, Spanish, French,
+# Italian and Portuguese speakers read English with that accent - plus a few new blends of the English voices.
+GIRLS_MORE = (
+    _extra("girl_heart", "Warm, natural and friendly - the cleanest stock voice.", {"af_heart": 1.0},
+           "Sulafat", "Speak warmly and naturally, friendly and clear."),
+    _extra("girl_luna", "Soft, intimate and calm.", {"af_nicole": 0.6, "af_sky": 0.4}, "Vindemiatrix",
+           "Speak softly and intimately, calm and soothing.", speed=0.92),
+    _extra("girl_ruby", "Upbeat, energetic presenter.", {"af_bella": 0.5, "af_jessica": 0.5}, "Zephyr",
+           "Speak like an upbeat, energetic presenter.", speed=1.08),
+    _extra("girl_grace", "Graceful, refined British blend.", {"bf_emma": 0.5, "af_heart": 0.5}, "Gacrux",
+           "Speak gracefully and with refinement.", lang="en-gb", speed=0.97),
+    _extra("girl_maya", "Hindi-accented English, warm.", {"hf_alpha": 1.0}, "Pulcherrima",
+           "Speak warmly with a light Indian accent."),
+    _extra("girl_anya", "Hindi-accented English, soft.", {"hf_beta": 1.0}, "Kore",
+           "Speak softly and gently with a light Indian accent.", speed=0.97),
+    _extra("girl_sofia", "Spanish-accented English.", {"ef_dora": 1.0}, "Leda",
+           "Speak warmly with a light Spanish accent."),
+    _extra("girl_chloe", "French-accented English, elegant.", {"ff_siwis": 1.0}, "Aoede",
+           "Speak elegantly with a light French accent."),
+    _extra("girl_giulia", "Italian-accented English, expressive.", {"if_sara": 1.0}, "Despina",
+           "Speak expressively with a light Italian accent."),
+    _extra("girl_luisa", "Brazilian-accented English.", {"pf_dora": 1.0}, "Achernar",
+           "Speak brightly with a light Brazilian accent."),
+)
+BOYS_MORE = (
+    _extra("boy_santa", "Jolly, deep and warm.", {"am_santa": 1.0}, "Sadaltager",
+           "Speak in a jolly, deep, warm voice.", speed=0.95),
+    _extra("boy_onyx", "Deep, resonant and smooth.", {"am_onyx": 1.0}, "Alnilam",
+           "Speak in a deep, resonant, smooth voice.", speed=0.95),
+    _extra("boy_lewis", "British, calm and thoughtful.", {"bm_lewis": 1.0}, "Schedar",
+           "Speak calmly and thoughtfully in a British manner.", lang="en-gb"),
+    _extra("boy_alex", "Spanish-accented English.", {"em_alex": 1.0}, "Achird",
+           "Speak in a friendly tone with a light Spanish accent."),
+    _extra("boy_nico", "Italian-accented English.", {"im_nicola": 1.0}, "Zubenelgenubi",
+           "Speak expressively with a light Italian accent."),
+    _extra("boy_omega", "Hindi-accented English, steady.", {"hm_omega": 1.0}, "Orus",
+           "Speak steadily with a light Indian accent."),
+    _extra("boy_psi", "Hindi-accented English, smooth.", {"hm_psi": 1.0}, "Sadachbia",
+           "Speak smoothly with a light Indian accent."),
+    _extra("boy_pedro", "Brazilian-accented English.", {"pm_alex": 1.0}, "Puck",
+           "Speak in a friendly tone with a light Brazilian accent."),
+    _extra("boy_host", "Energetic radio host.", {"am_puck": 0.5, "am_liam": 0.5}, "Fenrir",
+           "Speak like an energetic radio host.", speed=1.08),
+    _extra("boy_sage", "Wise, deep elder.", {"am_onyx": 0.5, "bm_george": 0.5}, "Charon",
+           "Speak slowly like a wise, deep-voiced elder.", speed=0.9),
+)
+
 # name -> (gender, display name, tagline). The girl_*/boy_* names derive their label automatically.
 _META = {
     "original": ("female", "Original Voice", "Warm, refined narrator"),
@@ -200,7 +247,7 @@ def _with_meta(p: VoiceProfile) -> VoiceProfile:
 
 
 BUILTIN: dict[str, VoiceProfile] = {
-    p.name: p for p in map(_with_meta, (ORIGINAL, REFERENCE, DEEP, BOY, *GIRLS, *BOYS))}
+    p.name: p for p in map(_with_meta, (ORIGINAL, REFERENCE, DEEP, BOY, *GIRLS, *BOYS, *GIRLS_MORE, *BOYS_MORE))}
 
 
 def load_profiles(path: str | os.PathLike | None = None) -> dict[str, VoiceProfile]:

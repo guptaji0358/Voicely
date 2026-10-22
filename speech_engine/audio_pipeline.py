@@ -80,6 +80,52 @@ def resample(chunk: AudioChunk, target_rate: int) -> AudioChunk:
     return AudioChunk(np.clip(np.rint(y), -32768, 32767).astype("<i2").tobytes(), target_rate)
 
 
+_VOCODER_BELOW = 0.8   # WSOLA repeats each pitch segment several times when slowing this much, which sounds buzzy
+
+
+def _phase_vocoder(x: np.ndarray, speed: float, rate: int) -> bytes:
+    """Pitch-preserving slow-down with an STFT phase vocoder and identity phase locking (smooth, no repeated segments)."""
+    n = int(rate * 0.064) // 8 * 8
+    hop_s = n // 8                                   # synthesis hop (87.5 % overlap)
+    hop_a = hop_s * speed                            # analysis hop
+    win = np.hanning(n + 1)[:n].astype(np.float32)
+    x = np.pad(x, (n, n))
+    frames = int((len(x) - 2 * n) / hop_a) + 1
+    starts = (np.arange(frames) * hop_a).astype(np.int64)
+    spec = np.fft.rfft(np.stack([x[s:s + n] * win for s in starts]), axis=1)
+    mag, ang = np.abs(spec), np.angle(spec)
+    omega = 2 * np.pi * np.arange(n // 2 + 1) * hop_a / n   # expected phase advance per analysis hop
+    out_phase = np.empty_like(ang)
+    out_phase[0] = ang[0]
+    for i in range(1, frames):
+        dev = ang[i] - ang[i - 1] - omega
+        dev -= 2 * np.pi * np.round(dev / (2 * np.pi))
+        inst = (omega + dev) / hop_a                         # instantaneous frequency (rad / sample)
+        # identity phase locking: bins around a spectral peak follow the peak's phase rotation
+        m = mag[i]
+        peak = np.zeros(len(m), bool)
+        peak[2:-2] = (m[2:-2] >= m[1:-3]) & (m[2:-2] >= m[3:-1]) & (m[2:-2] >= m[:-4]) & (m[2:-2] >= m[4:])
+        idx = np.flatnonzero(peak)
+        if len(idx):
+            owner = idx[np.clip(np.searchsorted((idx[:-1] + idx[1:]) / 2, np.arange(len(m))), 0, len(idx) - 1)]
+        else:
+            owner = np.arange(len(m))
+        adv = out_phase[i - 1] + inst * hop_s
+        locked = adv[owner] + (ang[i] - ang[i][owner])
+        out_phase[i] = np.where(np.isin(np.arange(len(m)), idx), adv, locked) if len(idx) else adv
+    frames_t = np.fft.irfft(mag * np.exp(1j * out_phase), n, axis=1).astype(np.float32) * win
+    y = np.zeros(frames * hop_s + n, np.float32)
+    norm = np.zeros_like(y)
+    w2 = win * win
+    for i in range(frames):
+        o = i * hop_s
+        y[o:o + n] += frames_t[i]
+        norm[o:o + n] += w2
+    y = y / np.maximum(norm, 1e-3)
+    y = y[n:len(y) - n] if len(y) > 2 * n else y
+    return np.clip(np.rint(y), -32768, 32767).astype("<i2").tobytes()
+
+
 def time_stretch(chunk: AudioChunk, speed: float, frame_ms: int = 40) -> AudioChunk:
     """Change tempo without changing pitch (WSOLA). ``speed`` > 1 is faster. Used for backends with no native speed.
 
@@ -91,6 +137,8 @@ def time_stretch(chunk: AudioChunk, speed: float, frame_ms: int = 40) -> AudioCh
     if not 0.25 <= speed <= 4.0:
         raise InvalidInputError("speed must be between 0.25 and 4.0")
     x = np.frombuffer(chunk.pcm, "<i2").astype(np.float32)
+    if speed < _VOCODER_BELOW:
+        return AudioChunk(_phase_vocoder(x, speed, chunk.sample_rate), chunk.sample_rate)
     n = int(chunk.sample_rate * frame_ms / 1000) // 4 * 4
     hop_out = n // 4
     hop_in = hop_out * speed

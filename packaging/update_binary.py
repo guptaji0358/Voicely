@@ -75,7 +75,7 @@ def main() -> int:
         if err:
             return say(f"Binary NOT updated: cannot clear dist/Voicely (is Voicely running?): {err}", False)
     r = run([sys.executable, str(ROOT / "packaging" / "make_dist.py"), "--build", str(ROOT / "gui" / "build"),
-             "--qt", QT, "--verify"])
+             "--qt", QT, "--with-google", "--verify"])
     if r.returncode or "ALL CHECKS PASSED" not in r.stdout:
         return say("Binary NOT updated: packaging/verification failed\n" + (r.stdout + r.stderr)[-1500:], False)
     STAMP.write_text(digest)

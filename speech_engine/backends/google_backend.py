@@ -13,9 +13,10 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import threading
 
-from ..audio_pipeline import decode_audio_bytes
+from ..audio_pipeline import decode_audio_bytes, time_stretch
 from ..exceptions import (BackendUnavailableError, ConfigurationError, RateLimitError,
                           SynthesisCancelled, SynthesisError)
 from .base import AudioChunk, Backend, BackendStatus, SynthParams
@@ -79,6 +80,9 @@ class GoogleBackend(Backend):
         return genai.Client(api_key=key, http_options=types.HttpOptions(timeout=int(timeout * 1000)))
 
     def synthesize(self, text, profile, params, cancel: threading.Event) -> AudioChunk:
+        # The text normaliser writes "AI" as "A.I" for the local model; Gemini reads plain "AI" correctly and
+        # would spell out the dot.
+        text = re.sub(r"(?<!\w)A\.I(?![\w.])", "AI", text)
         voice = profile.google_voice
         if voice not in PREBUILT_VOICES:
             raise ConfigurationError(f"unknown Gemini voice {voice!r}")
@@ -102,7 +106,8 @@ class GoogleBackend(Backend):
                 )
                 audio = inter.output_audio
                 raw = base64.b64decode(audio.data) if isinstance(audio.data, str) else bytes(audio.data)
-                return decode_audio_bytes(raw, getattr(audio, "mime_type", None), self.native_sample_rate)
+                chunk = decode_audio_bytes(raw, getattr(audio, "mime_type", None), self.native_sample_rate)
+                return time_stretch(chunk, params.speed) if params.speed else chunk
             except SynthesisError:
                 raise
             except Exception as exc:  # SDK/network errors

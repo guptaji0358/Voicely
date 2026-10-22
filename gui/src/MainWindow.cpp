@@ -20,6 +20,7 @@
 #include "ui/ReviewDialog.h"
 #include "ui/ModelLabDialog.h"
 #include "ui/ThemeManager.h"
+#include "SecretStore.h"
 #include "ui/VoiceCarousel.h"
 
 #include <QAction>
@@ -34,6 +35,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QDoubleValidator>
 #include <QFile>
 #include <QFileDialog>
 #include <QFormLayout>
@@ -113,6 +115,7 @@ static void useDefaultOutput(QAudioOutput *out) {
 }
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new ProtocolClient(this)) {
+    m_sessionApiKey = SecretStore::loadApiKey();      // remembered between runs (DPAPI-encrypted, per Windows user)
     const bool custom = Frameless::customFrameWanted();
     if (custom) {
         // Frameless + translucent: the shell paints the rounded, shadowed window. The extra hints keep the taskbar
@@ -452,12 +455,53 @@ void MainWindow::buildUi() {
     m_backend->setObjectName("backendCombo");
     m_lang = new QComboBox;
     m_lang->setObjectName("languageCombo");
-    m_speed = new QDoubleSpinBox;
+    m_speed = new QComboBox;
     m_speed->setObjectName("speedSpin");
-    m_speed->setRange(0.5, 2.0);
-    m_speed->setSingleStep(0.05);
-    m_speed->setValue(1.0);
-    m_speed->setToolTip("1.0 = the profile's own pace");
+    m_speed->setEditable(true);
+    m_speed->setInsertPolicy(QComboBox::NoInsert);
+    for (double v : {0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1.0, 1.1, 1.2, 1.25, 1.3, 1.4, 1.5, 1.75, 2.0})
+        m_speed->addItem(QString::number(v, 'f', 2), v);
+    m_speed->setMinimumWidth(96);
+    m_speed->setToolTip("Pick a speed or type your own (0.5 - 2.0). 1.0 = the profile's own pace");
+    {
+        auto *dv = new QDoubleValidator(0.5, 2.0, 2, m_speed);
+        dv->setNotation(QDoubleValidator::StandardNotation);
+        m_speed->lineEdit()->setValidator(dv);
+    }
+    setSpeedValue(1.0);
+    m_speedSlider = new QSlider(Qt::Horizontal);
+    m_speedSlider->setObjectName("speedSlider");
+    m_speedSlider->setRange(50, 200);
+    m_speedSlider->setSingleStep(5);
+    m_speedSlider->setPageStep(10);
+    m_speedSlider->setValue(100);
+    m_speedSlider->setToolTip("Speaking speed (0.5x - 2.0x)");
+    connect(m_speedSlider, &QSlider::valueChanged, this, [this](int v) {
+        if (qRound(speedValue() * 100) != v) setSpeedValue(v / 100.0);
+    });
+    auto syncSlider = [this] {
+        const QSignalBlocker b(m_speedSlider);
+        m_speedSlider->setValue(qRound(speedValue() * 100));
+    };
+    connect(m_speed, &QComboBox::activated, this, [this, syncSlider](int i) {
+        setSpeedValue(m_speed->itemData(i).toDouble());
+        syncSlider();
+    });
+    connect(m_speed->lineEdit(), &QLineEdit::textEdited, this, syncSlider);
+    connect(m_speed->lineEdit(), &QLineEdit::editingFinished, this, [this, syncSlider] {
+        setSpeedValue(speedValue());                 // clamp and normalise what was typed (e.g. "1.3" -> "1.30")
+        syncSlider();
+    });
+    m_emotion = new QComboBox;
+    m_emotion->setObjectName("emotionCombo");
+    m_emotion->addItem("Neutral", "neutral");
+    m_emotion->setToolTip("Delivery feeling. Local voices approximate it with pace, pitch and pauses; "
+                          "Google voices follow it as a style instruction.");
+    m_intensity = new QSlider(Qt::Horizontal);
+    m_intensity->setObjectName("emotionIntensity");
+    m_intensity->setRange(0, 100);
+    m_intensity->setValue(70);
+    m_intensity->setToolTip("How strongly the feeling is applied");
     m_style = new QLineEdit;
     m_style->setObjectName("styleEdit");
     m_style->setPlaceholderText("Optional style instruction (Google backend)");
@@ -483,6 +527,12 @@ void MainWindow::buildUi() {
     vl->addWidget(m_voiceInfoLabel);
     m_carousel = new VoiceCarousel(m_voice);
     vl->addWidget(m_carousel);
+    auto *browse = new QPushButton("Browse all voices…");
+    browse->setObjectName("browseVoices");
+    browse->setCursor(Qt::PointingHandCursor);
+    browse->setToolTip("Open the voice library: search, filter and hear every voice");
+    vl->addWidget(browse);
+    connect(browse, &QPushButton::clicked, this, &MainWindow::openVoiceLibrary);
     connect(m_voice, &QComboBox::currentIndexChanged, this, [this] {
         m_voiceInfoLabel->setText(m_voiceInfo.value(m_voice->currentData().toString()));
     });
@@ -499,6 +549,15 @@ void MainWindow::buildUi() {
     r1a->addWidget(m_langGroup, 1);
     r1a->addWidget(m_speedGroup);
     r1->addLayout(r1a);
+    r1->addWidget(group("", m_speedSlider));
+    auto *emoBox = new QWidget;
+    auto *emoRow = new QHBoxLayout(emoBox);
+    emoRow->setContentsMargins(0, 0, 0, 0);
+    emoRow->setSpacing(8);
+    emoRow->addWidget(m_emotion, 1);
+    emoRow->addWidget(m_intensity, 1);
+    m_emotionGroup = group("Feeling:", emoBox);
+    r1->addWidget(m_emotionGroup);
     r1->addWidget(m_styleGroup);
     vl->addWidget(m_optRow);
     vl->addWidget(m_voiceNote);
@@ -816,6 +875,9 @@ void MainWindow::setState(State s) {
     m_voice->setEnabled(idle);
     m_lang->setEnabled(idle);
     m_speed->setEnabled(idle);
+    m_speedSlider->setEnabled(idle);
+    m_emotion->setEnabled(idle);
+    m_intensity->setEnabled(idle);
     m_style->setEnabled(idle);
     m_saveMp3->setEnabled(idle && haveAudio);
     m_saveWav->setEnabled(idle && haveAudio);
@@ -880,8 +942,21 @@ void MainWindow::updatePreviewUi() {
 
 QProcessEnvironment MainWindow::workerEnv() const {
     QProcessEnvironment e;
-    if (!m_sessionApiKey.isEmpty()) e.insert("GEMINI_API_KEY", m_sessionApiKey);  // memory only, never persisted
+    if (!m_sessionApiKey.isEmpty()) e.insert("GEMINI_API_KEY", m_sessionApiKey);  // persisted only DPAPI-encrypted (SecretStore)
     return e;
+}
+
+double MainWindow::speedValue() const {
+    QString t = m_speed->currentText().trimmed();
+    if (t.endsWith('x', Qt::CaseInsensitive)) t.chop(1);
+    bool ok = false;
+    const double v = t.replace(',', '.').toDouble(&ok);
+    return ok ? qBound(0.5, v, 2.0) : 1.0;
+}
+
+void MainWindow::setSpeedValue(double v) {
+    v = qBound(0.5, v, 2.0);
+    m_speed->setEditText(QString::number(v, 'f', 2));
 }
 
 QString MainWindow::currentLanguage() const {
@@ -965,7 +1040,9 @@ void MainWindow::backendChanged() {
     m_langGroup->setVisible(hasLang);
     m_speedGroup->setVisible(hasSpeed);
     m_styleGroup->setVisible(hasStyle);
-    m_optRow->setVisible(hasLang || hasSpeed || hasStyle);
+    m_speedSlider->parentWidget()->setVisible(hasSpeed);
+    m_emotionGroup->setVisible(true);
+    m_optRow->setVisible(true);
     QString note = "“original” is a prompt/config-defined voice profile";
     note += b == "local" ? " (a weighted blend of stock Kokoro voices) — not a newly trained model. Runs offline."
             : b == "google" ? " (a Google prebuilt voice plus a style instruction) — not a trained model. Text is sent to Google."
@@ -1024,9 +1101,14 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         m_capsId.clear();
         if (status == "success") {
             m_caps = r;
+            if (const auto emo = r.value("emotions").toArray(); !emo.isEmpty()) {
+                m_emotion->clear();
+                for (const auto &e : emo) m_emotion->addItem(e.toObject().value("label").toString(), e.toObject().value("name").toString());
+            }
             m_voice->clear();
             m_voiceSamples.clear();
             m_voiceInfo.clear();
+            m_voiceEntries.clear();
             // Voice library: grouped like other voice platforms (Classic / Girls / Boys), friendly names, stored samples.
             struct Group { const char *title; QString gender; bool classic; };
             const QList<Group> groups{{"Classic voices", {}, true}, {"Girls", "female", false}, {"Boys", "male", false}};
@@ -1061,6 +1143,8 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
                                              o.value("kind").toString(),
                                          Qt::ToolTipRole);
                     m_voiceSamples.insert(name, o.value("sample_path").toString());
+                    m_voiceEntries.append({name, display, o.value("gender").toString(), tag,
+                                           o.value("sample_path").toString()});
                     const QString who = o.value("gender").toString() == "female" ? "Female"
                                         : o.value("gender").toString() == "male" ? "Male" : QString();
                     m_voiceInfo.insert(name, who.isEmpty() ? tag : who + "  ·  " + tag);
@@ -1268,7 +1352,11 @@ void MainWindow::generate(bool testVoice) {
                   {"overwrite", true}};
     for (auto it = extra.begin(); it != extra.end(); ++it) p[it.key()] = it.value();
     if (m_lang->isVisible() && m_lang->count()) p["language"] = m_lang->currentData().toString();
-    if (m_speed->isVisible() && !qFuzzyCompare(m_speed->value(), 1.0)) p["speed"] = m_speed->value();
+    if (m_speed->isVisible() && !qFuzzyCompare(speedValue(), 1.0)) p["speed"] = speedValue();
+    if (m_emotion->currentData().toString() != "neutral" && m_intensity->value() > 0) {
+        p["emotion"] = m_emotion->currentData().toString();
+        p["emotion_intensity"] = m_intensity->value() / 100.0;
+    }
     if (m_style->isVisible() && !m_style->text().trimmed().isEmpty()) p["style"] = m_style->text().trimmed();
     m_jobIsTest = testVoice;
     m_job = testVoice ? Job::Preview : Job::Synth;
@@ -1289,20 +1377,32 @@ void MainWindow::onPreviewClicked() {
         break;
     case PreviewButton::Mode::Idle: {
         // Stored sample (rendered once, shipped with the app) -> instant, no run-time synthesis.
-        // Only valid for the local backend those samples were made with; other backends synthesize live.
+        // Played on every backend, so hearing a voice never spends cloud API credit. Only the local (offline)
+        // engine may synthesize a live preview when a voice has no stored sample.
+        // (The "mock" backend only exists with SPEECH_ENGINE_ALLOW_MOCK=1, for the live-preview tests.)
         const QString sample = m_voiceSamples.value(m_voice->currentData().toString());
-        if (m_state == State::Idle && m_backend->currentData().toString() == "local" && !sample.isEmpty() &&
-            QFile::exists(sample)) {
+        const QString backend = m_backend->currentData().toString();
+        if (m_state == State::Idle && backend != "mock" && !sample.isEmpty() && QFile::exists(sample)) {
             releasePreviewFile();
             if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
             m_previewPlayer->setSource(QUrl::fromLocalFile(sample));   // m_previewPath stays empty: never deleted
             { useDefaultOutput(m_previewOut); m_previewPlayer->play(); }
-        } else {
+        } else if (backend == "local" || backend == "mock") {
             generate(true);
+        } else {
+            setStatus("No stored sample for this voice - previews never use your API key.", true);
         }
         break;
     }
     }
+}
+
+void MainWindow::openVoiceLibrary() {
+    stopPreview();
+    VoiceLibraryDialog d(m_voiceEntries, m_voice->currentData().toString(), this);
+    if (d.exec() != QDialog::Accepted) return;
+    const int i = m_voice->findData(d.selectedName());
+    if (i >= 0) m_voice->setCurrentIndex(i);
 }
 
 void MainWindow::stopPreview() {
@@ -1499,7 +1599,8 @@ void MainWindow::onSaveFeedback(const QJsonObject &attempt) {
             if (c.toObject().value("chunk").toInt() == attempt.value("chunk").toInt()) chunkText = c.toObject().value("intended").toString();
         const QJsonObject rec{{"original_text", chunkText.isEmpty() ? m_text->toPlainText().left(1000) : chunkText}, {"term", term},
                               {"language", currentLanguage()}, {"voice", m_voice->currentData().toString()}, {"backend", backend},
-                              {"pronunciation_settings", QJsonObject{{"speed", m_speed->value()}, {"style", m_style->text()}}},
+                              {"pronunciation_settings", QJsonObject{{"speed", speedValue()}, {"style", m_style->text()},
+                                                                      {"emotion", m_emotion->currentData().toString()}}},
                               {"verification", QJsonObject{{"status", attempt.value("recheck_status")}, {"recognized_after", attempt.value("recognized")}}},
                               {"correction", QJsonObject{{"written", term}, {"hint", cand.value("hint")}, {"ipa", cand.value("ipa")},
                                                          {"category", "name"}}},
@@ -1782,7 +1883,7 @@ void MainWindow::openSettings() {
     root->setPlaceholderText("auto: " + Config::findEngineRoot());
     auto *key = new QLineEdit(m_sessionApiKey);
     key->setEchoMode(QLineEdit::Password);
-    key->setPlaceholderText("Optional. Otherwise GEMINI_API_KEY from the environment is used.");
+    key->setPlaceholderText("Paste key from aistudio.google.com/apikey (or leave empty to use GEMINI_API_KEY)");
     auto *theme = new QComboBox;
     theme->addItems(ThemeManager::availableThemes());
     theme->setCurrentText(ThemeManager::instance().current());
@@ -1813,15 +1914,28 @@ void MainWindow::openSettings() {
     };
     form->addRow("Python interpreter", browse(py, false));
     form->addRow("Engine folder", browse(root, true));
-    form->addRow("Google API key (this session only)", key);
+    form->addRow("Google API key (remembered)", key);
     form->addRow("Theme", theme);
     form->addRow("", reduce);
     form->addRow("", fx);
     form->addRow("", snd);
     form->addRow("Delete temp audio after", keep);
     form->addRow("", native);
-    auto *note = new QLabel("The API key is held in memory and passed to the worker; it is never written to disk. "
-                            "Set GEMINI_API_KEY in your user environment for a persistent key. Saving restarts the worker.");
+    auto *note = new QLabel(
+        "<b>How to get and add a Google (Gemini) API key</b>"
+        "<ol style='margin-top:2px; margin-bottom:2px'>"
+        "<li>Open <a href='https://aistudio.google.com/apikey'>aistudio.google.com/apikey</a> and sign in with a Google account.</li>"
+        "<li>Click <i>Create API key</i> (pick or create a Google Cloud project) and copy the key.</li>"
+        "<li>Paste it into the field above and click Save. Voicely remembers it, so you only do this once.</li>"
+        "<li>Alternatively set <code>GEMINI_API_KEY</code> (or <code>GOOGLE_API_KEY</code>) as a Windows environment variable.</li>"
+        "</ol>"
+        "Docs: <a href='https://ai.google.dev/gemini-api/docs/api-key'>ai.google.dev/gemini-api/docs/api-key</a> &middot; "
+        "Pricing and limits: <a href='https://ai.google.dev/gemini-api/docs/pricing'>ai.google.dev/gemini-api/docs/pricing</a>"
+        "<br><br>The key is stored encrypted with Windows (readable only by your Windows account) and passed to the "
+        "worker. Voice previews use stored samples and never spend API credit. Saving restarts the worker.");
+    note->setTextFormat(Qt::RichText);
+    note->setOpenExternalLinks(true);
+    note->setTextInteractionFlags(Qt::TextBrowserInteraction);
     note->setWordWrap(true);
     note->setObjectName("muted");
     form->addRow(note);
@@ -1856,6 +1970,7 @@ void MainWindow::openSettings() {
         if (ThemeManager::instance().usingFallback()) setStatus(ThemeManager::instance().lastError(), true);
     }
     m_sessionApiKey = key->text().trimmed();
+    SecretStore::saveApiKey(m_sessionApiKey);
     if (m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking || m_state == State::Repairing)
         cancelJob();
     // Restart: stopping triggers workerStopped; start again afterwards.

@@ -51,7 +51,8 @@ void UiSounds::installClickFilter() {
 bool UiSounds::eventFilter(QObject *o, QEvent *e) {
     if (e->type() == QEvent::MouseButtonPress && static_cast<QMouseEvent *>(e)->button() == Qt::LeftButton) {
         if (auto *b = qobject_cast<QAbstractButton *>(o)) {
-            if (b->isEnabled() && b->objectName() != "primary") play(b->isCheckable() ? Sound::Toggle : Sound::Click);
+            // No click under the Play button: a second stream opening at the same instant makes playback start with a glitch.
+            if (b->isEnabled() && b->objectName() != "primary" && b->objectName() != "playButton") play(b->isCheckable() ? Sound::Toggle : Sound::Click);
         }
     }
     return false;

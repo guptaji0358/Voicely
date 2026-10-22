@@ -29,6 +29,7 @@ void ProtocolClient::start(const QString &pythonExe, const QString &engineRoot,
     if (m_proc.state() != QProcess::NotRunning) return;
     m_ready = false;
     m_stopping = false;
+    ++m_generation;
     m_outBuf.clear();
     m_errBuf.clear();
     m_python = pythonExe;
@@ -49,8 +50,9 @@ void ProtocolClient::stop() {
     m_stopping = true;
     if (m_proc.state() == QProcess::NotRunning) return;
     m_proc.closeWriteChannel();                  // worker cancels its job and exits on EOF
-    QTimer::singleShot(3000, this, [this] {
-        if (m_proc.state() != QProcess::NotRunning) m_proc.kill();
+    const int gen = m_generation;
+    QTimer::singleShot(3000, this, [this, gen] {
+        if (gen == m_generation && m_proc.state() != QProcess::NotRunning) m_proc.kill();
     });
 }
 

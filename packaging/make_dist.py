@@ -36,7 +36,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_PKGS = ["kokoro-onnx", "lameenc", "numpy"]            # + closure
-SKIP_PARTS = {"__pycache__", "tests", "test", "testing", "_pytest", "benchmarks", "doc", "docs"}
+SKIP_PARTS = {"__pycache__", "tests", "test", "_pytest", "benchmarks", "doc", "docs"}
 STDLIB_SKIP = {"test", "tests", "idlelib", "tkinter", "turtledemo", "lib2to3", "ensurepip", "pydoc_data", "__pycache__",
                "site-packages", "venv", "distutils"}
 

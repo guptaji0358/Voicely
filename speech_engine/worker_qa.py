@@ -8,6 +8,7 @@ import shutil
 import sys
 import wave
 
+from .worker_defaults import DEFAULT_BACKEND
 from .exceptions import (BackendUnavailableError, InvalidInputError, SpeechEngineError)
 
 MAX_TEXT_CHARS = 2_000_000
@@ -32,7 +33,9 @@ class QAMixin:
         overrides = {"speed": s.m.get("speed")}
         if s.m["backend"] in ("local", "mock"):
             overrides["local_lang"] = s.m["language"]
-        return backend, get_profile(s.m["voice"]).with_overrides(**overrides)
+        from .emotions import apply_emotion
+        profile = get_profile(s.m["voice"]).with_overrides(**overrides)
+        return backend, apply_emotion(profile, s.m.get("emotion"), s.m.get("emotion_intensity"))
 
     def _thresholds(self, req):
         from .verification import Thresholds
@@ -55,7 +58,8 @@ class QAMixin:
         s = Session.create(req["session_dir"], text, backend, profile,
                            SynthParams(speed=req.get("speed"), style=req.get("style") or None), language,
                            qa.dictionary if req.get("dictionary", True) else None, cancel, on_progress,
-                           qa.versions(backend.name))
+                           qa.versions(backend.name),
+                           emotion=(req.get("emotion"), req.get("emotion_intensity")))
         try:                                   # opt-in learning record; it must never be able to break a generation
             from .experience import ExperienceStore
             ExperienceStore().add_generation(s.m["session_id"], s.chunks, language, profile.name, backend.name)
@@ -117,7 +121,7 @@ class QAMixin:
         text = req.get("text")
         if not isinstance(text, str) or not text.strip():
             raise InvalidInputError("text is empty")
-        backend = make_backend(req.get("backend") or "local")
+        backend = make_backend(req.get("backend") or DEFAULT_BACKEND)
         self.qa.bind_ipa_vocab(backend)
         self.progress(rid, 5, "asking the language model")
         examples = self.qa.feedback.approved_examples() if self.qa.llm.config.use_examples else None
@@ -145,7 +149,7 @@ class QAMixin:
             raise InvalidInputError("text is empty")
         if len(text) > MAX_TEXT_CHARS:
             raise InvalidInputError("text too long")
-        return self.qa.analyze(text, req.get("language") or "en-us", make_backend(req.get("backend") or "local"))
+        return self.qa.analyze(text, req.get("language") or "en-us", make_backend(req.get("backend") or DEFAULT_BACKEND))
 
     def sync_action(self, rid, action, req):
         from .feedback import ConsentRequired

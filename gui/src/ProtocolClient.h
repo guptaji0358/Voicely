@@ -64,5 +64,6 @@ private:
     QHash<QString, QTimer *> m_pending;   // id -> timeout timer (may be null-timer for no timeout)
     bool m_ready = false;
     bool m_stopping = false;
+    int m_generation = 0;   // bumped on every start(); a delayed kill must not hit a newer worker
     QString m_python;
 };

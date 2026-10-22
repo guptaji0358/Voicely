@@ -15,6 +15,8 @@
 #include <QTemporaryDir>
 #include <QTimer>
 
+#include "ui/VoiceLibraryDialog.h"
+
 class ProtocolClient;
 class PreviewButton;
 class StateIcon;
@@ -103,6 +105,7 @@ private slots:
     void updateCounts();
     void backendChanged();
     void onPreviewClicked();
+    void openVoiceLibrary();
     void onGenerateClicked();
 
 private:
@@ -142,6 +145,8 @@ private:
     void showReview(const QJsonObject &analysis, bool thenGenerate);
     void removeSession();
     QString currentLanguage() const;
+    double speedValue() const;
+    void setSpeedValue(double v);
     QJsonObject qaThresholds() const;      // optional advanced override (setting "qaThresholds" = JSON object)
     bool backendHasIpa() const;
     QProcessEnvironment workerEnv() const;
@@ -175,6 +180,7 @@ private:
     bool m_entrancePlayed = false;
     StateIcon *m_dot, *m_busy;
     QLabel *m_title, *m_status, *m_counts, *m_outLabel, *m_time, *m_voiceNote, *m_textBadge, *m_voiceInfoLabel;
+    QList<VoiceEntry> m_voiceEntries;                     // every voice, for the voice library dialog
     QMap<QString, QString> m_voiceSamples, m_voiceInfo;   // voice -> stored sample path / "Female · tagline"
     QPushButton *m_settingsBtn, *m_import, *m_clear, *m_paste, *m_generate, *m_play, *m_stop,
         *m_saveMp3, *m_saveWav, *m_cancel, *m_checkText, *m_verOriginal, *m_verRepaired;
@@ -182,13 +188,14 @@ private:
     QWidget *m_versionBar;
     PreviewButton *m_preview;
     QPlainTextEdit *m_text, *m_log;
-    QComboBox *m_voice, *m_backend, *m_lang, *m_bitrate;
-    QDoubleSpinBox *m_speed;
+    QComboBox *m_voice, *m_backend, *m_lang, *m_bitrate, *m_speed;   // m_speed: editable, presets in the dropdown
+    QSlider *m_speedSlider, *m_intensity;
+    QComboBox *m_emotion;
     QLineEdit *m_style;
     SmoothProgressBar *m_progress;
     QSlider *m_seek;
     QToolButton *m_logToggle;
-    QWidget *m_logPanel, *m_optRow, *m_langGroup, *m_speedGroup, *m_styleGroup;
+    QWidget *m_logPanel, *m_optRow, *m_langGroup, *m_speedGroup, *m_styleGroup, *m_emotionGroup;
     QStackedWidget *m_audioStack;
     WaveformWidget *m_wave;
     EmptyState *m_inputEmpty;

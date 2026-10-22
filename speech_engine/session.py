@@ -117,7 +117,7 @@ class Session:
     @classmethod
     def create(cls, folder: str | Path, text: str, backend: Backend, profile: VoiceProfile, params: SynthParams,
                language: str, dictionary: PronDictionary | None, cancel: threading.Event,
-               progress=None, versions: dict | None = None) -> "Session":
+               progress=None, versions: dict | None = None, emotion: tuple = (None, None)) -> "Session":
         folder = Path(folder)
         if folder.exists() and not folder.is_dir():
             raise InvalidInputError(f"{folder} is not a folder")
@@ -129,7 +129,8 @@ class Session:
         spans = locate_chunks(text, [c.text for c in chunks])
         s.m = {"schema": SCHEMA, "session_id": uuid.uuid4().hex[:12], "created": time.time(),
                "original_text": text, "language": language, "backend": backend.name, "voice": profile.name,
-               "speed": params.speed, "style": params.style, "dictionary_version": dictionary.version if dictionary else 0,
+               "speed": params.speed, "style": params.style,
+               "emotion": emotion[0], "emotion_intensity": emotion[1], "dictionary_version": dictionary.version if dictionary else 0,
                "versions": versions or {}, "sample_rate": None, "chunks": [],
                "selection": {"accepted": {}, "candidate": None}}
         for i, ch in enumerate(chunks):

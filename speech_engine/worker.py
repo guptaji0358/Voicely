@@ -59,6 +59,7 @@ def log(msg: str) -> None:
     print(f"[worker] {msg}", file=sys.stderr, flush=True)
 
 
+from .worker_defaults import DEFAULT_BACKEND, LOCAL_ENABLED
 from .worker_qa import QAMixin
 
 
@@ -140,7 +141,7 @@ class Worker(QAMixin):
     def health(self, rid, req):
         from .encoders import encoder_status
         from .engine import make_backend
-        names = ["local", "google"] + (["mock"] if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1" else [])
+        names = (["local"] if LOCAL_ENABLED else []) + ["google"] + (["mock"] if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1" else [])
         backends = {}
         for n in names:
             try:
@@ -176,17 +177,19 @@ class Worker(QAMixin):
         samples = Path(__file__).resolve().parent / "voice_samples"
         voices = [{"name": n, "description": p.description, "speed": p.speed,
                    "gender": p.gender, "display_name": p.display_name or n, "tagline": p.tagline,
-                   "sample_path": str(samples / f"{n}.wav") if (samples / f"{n}.wav").is_file() else "",
+                   "sample_path": next((str(samples / f"{n}{e}") for e in (".mp3", ".wav") if (samples / f"{n}{e}").is_file()), ""),
                    "kind": "prompt/config-defined profile (not a trained model)"}
                   for n, p in sorted(profiles.items())]
-        backends = {"local": {"languages": LANGUAGES, "speed": True, "style": False, "network": False},
-                    "google": {"languages": {}, "speed": False, "style": True, "network": True}}
+        backends = {"google": {"languages": {}, "speed": True, "style": True, "network": True}}
+        if LOCAL_ENABLED:
+            backends["local"] = {"languages": LANGUAGES, "speed": True, "style": False, "network": False}
         if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
             backends["mock"] = {"languages": {"en-us": "tone"}, "speed": False, "style": False, "network": False}
         pron = {"local": {"respelling": True, "ipa": True}, "google": {"respelling": True, "ipa": False}}
         if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
             pron["mock"] = {"respelling": True, "ipa": False}
-        self.ok(rid, voices=voices, backends=backends, formats=["wav", "mp3"],
+        from .emotions import emotion_list
+        self.ok(rid, voices=voices, emotions=emotion_list(), backends=backends, formats=["wav", "mp3"],
                 bitrates=[64, 96, 128, 160, 192, 224, 256, 320],
                 **({"pronunciation": pron, "protocol_versions": list(SUPPORTED_VERSIONS)} if self._v(rid) >= 2 else {}))
 
@@ -281,7 +284,7 @@ class Worker(QAMixin):
             resolve_mp3_settings(None, bitrate)
             if not encoder_status()["mp3"]:
                 raise EncoderUnavailableError(INSTALL_HELP)
-        backend = make_backend(req.get("backend") or "local")
+        backend = make_backend(req.get("backend") or DEFAULT_BACKEND)
         st = backend.status()
         if not st.available:
             raise BackendUnavailableError(f"backend '{st.name}' unavailable: " + "; ".join(st.problems))
@@ -290,6 +293,8 @@ class Worker(QAMixin):
         if req.get("language") and backend.name in ("local", "mock"):
             overrides["local_lang"] = req["language"]
         profile = profile.with_overrides(**overrides)
+        from .emotions import apply_emotion
+        profile = apply_emotion(profile, req.get("emotion"), req.get("emotion_intensity"))
         if req.get("session_dir"):
             return self.synthesize_session(rid, req, cancel, backend, profile, text, out, fmt)
         eng = SpeechEngine(backend, profile)
@@ -302,7 +307,7 @@ class Worker(QAMixin):
 
         try:
             self.progress(rid, 0, "starting")
-            info = eng.synthesize_to_file(text, out, fmt, SynthParams(style=req.get("style") or None),
+            info = eng.synthesize_to_file(text, out, fmt, SynthParams(speed=req.get("speed"), style=req.get("style") or None),
                                           cancel=cancel, progress=on_progress, bitrate_kbps=bitrate)
         finally:
             eng.close()
