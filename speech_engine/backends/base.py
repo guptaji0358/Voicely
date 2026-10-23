@@ -52,6 +52,8 @@ class SynthParams:
     timeout: float = 60.0
     # (written word, IPA) pairs the backend should pronounce exactly; ignored unless ``supports_ipa``.
     overrides: tuple = ()
+    # Elongated words ("helloooo"): 0 = read them normally, 1 = default hold, up to 3 = held much longer.
+    stretch: float = 1.0
 
 
 class Backend(ABC):

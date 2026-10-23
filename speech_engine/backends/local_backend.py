@@ -307,8 +307,8 @@ class LocalBackend(Backend):
                 "well", "tell", "still", "kiss", "miss", "boss", "less", "wow", "oops", "zoo", "moon", "food", "room",
                 "mood", "cheese", "freeze", "squeeze", "between", "peek", "seek", "speed", "agree", "coffee", "balloon"}
 
-    def _elongation_overrides(self, k, text: str, lang: str) -> tuple:
-        if not (lang or "").lower().startswith("en") or not self._ELONG.search(text):
+    def _elongation_overrides(self, k, text: str, lang: str, stretch: float = 1.0) -> tuple:
+        if stretch <= 0 or not (lang or "").lower().startswith("en") or not self._ELONG.search(text):
             return ()
         out = []
         for m in self._ELONG.finditer(text):
@@ -326,7 +326,7 @@ class LocalBackend(Backend):
                 ipa = k.tokenizer.phonemize(base, lang).strip()
             except Exception:
                 continue
-            extra = min(int((n - 1) * self._TOKENS_PER_LETTER + 0.5), self._MAX_EXTRA_TOKENS)
+            extra = min(int((n - 1) * self._TOKENS_PER_LETTER * stretch + 0.5), self._MAX_EXTRA_TOKENS)
             out.append((word, self._hold_phoneme(ipa, ch, extra, at_end)))
         return tuple(out)
 
@@ -370,7 +370,7 @@ class LocalBackend(Backend):
             style = self._style(k, profile)
             try:
                 overrides = (tuple(params.overrides) + self._builtin_overrides(text, profile.local_lang)
-                             + self._elongation_overrides(k, text, profile.local_lang))
+                             + self._elongation_overrides(k, text, profile.local_lang, params.stretch))
                 use_ph = bool(overrides)
                 payload = self._phonemes_with_overrides(k, text, overrides, profile.local_lang) if use_ph else text
                 # Kokoro's duration model glitches (repeats the first sound) below ~0.85x, so slower speech is produced at the

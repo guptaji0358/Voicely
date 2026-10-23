@@ -2,14 +2,14 @@
 // Pre-synthesis review: lists the words/phrases the analysis flagged (names, numbers, acronyms, heteronyms,
 // multilingual text...) and lets the user add pronunciations - by hand or from validated AI suggestions - before
 // generating. Nothing is changed in the text; accepting the dialog only means "go ahead and generate".
-#include <QDialog>
+#include "DialogFrame.h"
 #include <QJsonObject>
 
 class ProtocolClient;
 class QLabel;
 class QTableWidget;
 
-class ReviewDialog : public QDialog {
+class ReviewDialog : public StyledDialog {
     Q_OBJECT
 public:
     ReviewDialog(ProtocolClient *client, const QJsonObject &analysis, const QString &text, const QString &language,

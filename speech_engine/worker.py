@@ -59,7 +59,7 @@ def log(msg: str) -> None:
     print(f"[worker] {msg}", file=sys.stderr, flush=True)
 
 
-from .worker_defaults import DEFAULT_BACKEND, LOCAL_ENABLED
+from .worker_defaults import DEFAULT_BACKEND, LOCAL_ENABLED, stretch_of as _stretch
 from .worker_qa import QAMixin
 
 
@@ -307,7 +307,8 @@ class Worker(QAMixin):
 
         try:
             self.progress(rid, 0, "starting")
-            info = eng.synthesize_to_file(text, out, fmt, SynthParams(speed=req.get("speed"), style=req.get("style") or None),
+            info = eng.synthesize_to_file(text, out, fmt, SynthParams(speed=req.get("speed"), style=req.get("style") or None,
+                                                       stretch=_stretch(req)),
                                           cancel=cancel, progress=on_progress, bitrate_kbps=bitrate)
         finally:
             eng.close()

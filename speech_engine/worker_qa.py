@@ -8,7 +8,7 @@ import shutil
 import sys
 import wave
 
-from .worker_defaults import DEFAULT_BACKEND
+from .worker_defaults import DEFAULT_BACKEND, stretch_of as _stretch
 from .exceptions import (BackendUnavailableError, InvalidInputError, SpeechEngineError)
 
 MAX_TEXT_CHARS = 2_000_000
@@ -56,7 +56,8 @@ class QAMixin:
 
         self.progress(rid, 0, "starting")
         s = Session.create(req["session_dir"], text, backend, profile,
-                           SynthParams(speed=req.get("speed"), style=req.get("style") or None), language,
+                           SynthParams(speed=req.get("speed"), style=req.get("style") or None,
+                                   stretch=_stretch(req)), language,
                            qa.dictionary if req.get("dictionary", True) else None, cancel, on_progress,
                            qa.versions(backend.name),
                            emotion=(req.get("emotion"), req.get("emotion_intensity")))

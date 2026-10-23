@@ -2,7 +2,6 @@
   <qresource prefix="/">
     <file alias="styles/components.qss">../assets/styles/components.qss</file>
     <file alias="styles/dark.qss">../assets/styles/dark.qss</file>
-    <file alias="styles/light.qss">../assets/styles/light.qss</file>
     <file alias="icons/accept.svg">../assets/icons/accept.svg</file>
     <file alias="icons/add.svg">../assets/icons/add.svg</file>
     <file alias="icons/ai.svg">../assets/icons/ai.svg</file>
@@ -25,6 +24,7 @@
     <file alias="icons/import.svg">../assets/icons/import.svg</file>
     <file alias="icons/info.svg">../assets/icons/info.svg</file>
     <file alias="icons/menu.svg">../assets/icons/menu.svg</file>
+    <file alias="icons/panel.svg">../assets/icons/panel.svg</file>
     <file alias="icons/paste.svg">../assets/icons/paste.svg</file>
     <file alias="icons/pause.svg">../assets/icons/pause.svg</file>
     <file alias="icons/play.svg">../assets/icons/play.svg</file>

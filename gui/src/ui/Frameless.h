@@ -9,6 +9,7 @@
 #include <QPixmap>
 #include <QWidget>
 
+
 class AnimatedButton;
 class GlStage;
 class IconWidget;
@@ -26,6 +27,9 @@ Qt::CursorShape cursorFor(Qt::Edges e);
 bool customFrameWanted();
 // Keeps a restored geometry on a screen that still exists (monitor unplugged, resolution/scale changed).
 QRect fitToScreens(const QRect &saved, const QSize &fallback);
+// The window backdrop shared by the main window and every dialog: drop shadow in the `inset` margin, a rounded gradient
+// panel with soft glows and a receding floor grid, and (optionally) a hairline outline.
+QPixmap renderBackdrop(const QSize &size, qreal dpr, int inset, qreal radius, bool outline);
 }  // namespace Frameless
 
 class ShellWidget : public QWidget {
@@ -37,7 +41,7 @@ public:
     bool customFrame() const { return m_custom; }
     int inset() const { return m_inset; }
     // 3D look: an OpenGL stage under all widgets. Returns whether it is active. It stays off (flat painter look) on the
-    // offscreen platform, in the light theme, with TTS_NO_GL set, or if OpenGL/shaders fail (effectsFailed is emitted).
+    // offscreen platform, with TTS_NO_GL set, or if OpenGL/shaders fail (effectsFailed is emitted).
     bool setEffectsEnabled(bool on);
     GlStage *glStage() const { return m_gl; }
     void setBusyCursor(bool on);                 // busy cursor on the window background while the engine works
@@ -79,20 +83,23 @@ public:
     QWidget *orbSlot() const { return m_orbSlot; }          // where the 3D orb is drawn (when effects are on)
     void setOrbMode(bool on);                               // orb slot replaces the flat logo
     QToolButton *panelButton() const { return m_panelBtn; } // shows / hides the side panel
+    AnimatedButton *settingsButton() const { return m_settingsBtn; }
     void addCenterWidget(QWidget *w);                       // controls placed in the free middle of the bar (export, drag)
+    void addActionWidget(QWidget *w);                       // icon actions beside the title (import, paste, clear, check)
 
 protected:
     void mousePressEvent(QMouseEvent *) override;
     void mouseMoveEvent(QMouseEvent *) override;
     void mouseReleaseEvent(QMouseEvent *) override;
     void mouseDoubleClickEvent(QMouseEvent *) override;
+    void resizeEvent(QResizeEvent *) override;
 
 private:
     void toggleMaximize();
     QPoint m_pressPos;
     bool m_dragArmed = false;
-    AnimatedButton *m_min, *m_max, *m_close;
-    QHBoxLayout *m_center = nullptr;
+    AnimatedButton *m_min, *m_max, *m_close, *m_settingsBtn;
+    QHBoxLayout *m_center = nullptr, *m_actions = nullptr;
     QToolButton *m_menuBtn, *m_panelBtn;
     QWidget *m_logo, *m_orbSlot;
     QMenu *m_menu;

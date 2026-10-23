@@ -1,10 +1,12 @@
 #include "Frameless.h"
+#include "Controls.h"
 
 #include "Buttons.h"
 #include "Config.h"
 #include "GlStage.h"
 #include "Icons.h"
 #include "Indicators.h"
+#include "Menus.h"
 #include "ThemeManager.h"
 
 #include <QApplication>
@@ -145,23 +147,21 @@ void ShellWidget::changeEvent(QEvent *e) {
     if (e->type() == QEvent::StyleChange) m_backdropSize = {};
 }
 
-void ShellWidget::rebuildBackdrop() {
-    const qreal dpr = devicePixelRatioF();
-    m_backdrop = QPixmap((size() * dpr).expandedTo(QSize(1, 1)));
-    m_backdrop.setDevicePixelRatio(dpr);
-    m_backdrop.fill(Qt::transparent);
-    QPainter p(&m_backdrop);
+QPixmap Frameless::renderBackdrop(const QSize &size, qreal dpr, int inset, qreal radius, bool outline) {
+    QPixmap pix((QSizeF(size) * dpr).toSize().expandedTo(QSize(1, 1)));
+    pix.setDevicePixelRatio(dpr);
+    pix.fill(Qt::transparent);
+    QPainter p(&pix);
     p.setRenderHint(QPainter::Antialiasing);
     const auto &t = ThemeManager::instance();
-    const QRectF win = QRectF(rect()).adjusted(m_inset, m_inset, -m_inset, -m_inset);
-    const qreal radius = (m_custom && !m_maximized) ? 12 : 0;
+    const QRectF win = QRectF(QPointF(0, 0), QSizeF(size)).adjusted(inset, inset, -inset, -inset);
 
-    if (m_custom && m_inset > 0) {            // window drop shadow (it is part of the translucent window)
+    if (inset > 0) {                          // window drop shadow (it is part of the translucent window)
         QColor sh = t.color("shadow", QColor(0, 0, 0, 110));
         p.setPen(Qt::NoPen);
-        for (int i = m_inset; i >= 1; --i) {
+        for (int i = inset; i >= 1; --i) {
             QColor c = sh;
-            const qreal f = 1.0 - qreal(i) / (m_inset + 1);
+            const qreal f = 1.0 - qreal(i) / (inset + 1);
             c.setAlphaF(qMin(1.0, sh.alphaF() * f * f / 3.2));
             p.setBrush(c);
             p.drawRoundedRect(win.adjusted(-i, -i + 4, i, i + 4), radius + i, radius + i);
@@ -202,13 +202,21 @@ void ShellWidget::rebuildBackdrop() {
         p.drawLine(QPointF(win.left(), y), QPointF(win.right(), y));
     }
     p.setClipping(false);
-    QColor edge = t.color("border-strong", QColor("#3a4050"));
-    edge.setAlphaF(0.8);
-    p.setPen(QPen(edge, 1));
-    p.setBrush(Qt::NoBrush);
-    if (m_custom) p.drawRoundedRect(win.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    if (outline) {
+        QColor edge = t.color("border-strong", QColor("#3a4050"));
+        edge.setAlphaF(0.8);
+        p.setPen(QPen(edge, 1));
+        p.setBrush(Qt::NoBrush);
+        p.drawRoundedRect(win.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius);
+    }
+    return pix;
+}
+
+void ShellWidget::rebuildBackdrop() {
+    const qreal radius = (m_custom && !m_maximized) ? 12 : 0;
+    m_backdrop = Frameless::renderBackdrop(size(), devicePixelRatioF(), m_custom ? m_inset : 0, radius, m_custom);
     m_backdropSize = size();
-    m_backdropTheme = t.current();
+    m_backdropTheme = ThemeManager::instance().current();
 }
 
 void ShellWidget::paintEvent(QPaintEvent *) {
@@ -218,7 +226,7 @@ void ShellWidget::paintEvent(QPaintEvent *) {
     p.drawPixmap(0, 0, m_backdrop);
 }
 
-void ShellWidget::applyBaseCursor() { setCursor(m_busy ? Qt::BusyCursor : Qt::ArrowCursor); }
+void ShellWidget::applyBaseCursor() { setCursor(m_busy ? QCursor(Qt::BusyCursor) : Cursors::arrow()); }
 
 void ShellWidget::setBusyCursor(bool on) {
     m_busy = on;
@@ -266,11 +274,10 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     m_panelBtn->setObjectName("panelToggle");
     m_panelBtn->setCheckable(true);
     m_panelBtn->setChecked(true);
-    m_panelBtn->setIcon(Icons::icon("settings"));
+    m_panelBtn->setIcon(Icons::icon("panel"));
     m_panelBtn->setIconSize(QSize(16, 16));
-    m_panelBtn->setText("Tools");
-    m_panelBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    m_panelBtn->setToolTip("Show or hide the voice and pronunciation panel");
+    m_panelBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_panelBtn->setToolTip("Show or hide the voice and pronunciation panel (Ctrl+B)");
     m_panelBtn->setAccessibleName("Toggle side panel");
     m_name = new QLabel("Voicely");
     m_name->setObjectName("appName");
@@ -279,15 +286,23 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     m_chip->setObjectName("backendChip");
     m_menuBtn = new QToolButton;
     m_menuBtn->setObjectName("commandMenu");
-    m_menuBtn->setText("Menu");
     m_menuBtn->setIcon(Icons::icon("menu"));
     m_menuBtn->setIconSize(QSize(16, 16));
-    m_menuBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_menuBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_menuBtn->setToolTip("All commands");
     m_menuBtn->setPopupMode(QToolButton::InstantPopup);
     m_menuBtn->setAccessibleName("Command menu");
     m_menuBtn->setFocusPolicy(Qt::TabFocus);
-    m_menu = new QMenu(m_menuBtn);
+    m_menu = new FancyMenu(m_menuBtn);
     m_menuBtn->setMenu(m_menu);
+
+    m_settingsBtn = new AnimatedButton;
+    m_settingsBtn->setObjectName("settingsButton");
+    m_settingsBtn->setProperty("variant", "tool");
+    m_settingsBtn->setIcon(Icons::icon("settings"));
+    m_settingsBtn->setIconSize(QSize(18, 18));
+    m_settingsBtn->setToolTip("Settings (Ctrl+,)");
+    m_settingsBtn->setAccessibleName("Settings");
 
     auto caption = [](const char *name, const char *icon, const QString &tip) {
         auto *b = new AnimatedButton;
@@ -309,6 +324,11 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     h->addSpacing(6);
     h->addWidget(m_state);
     h->addWidget(m_chip);
+    h->addSpacing(8);
+    m_actions = new QHBoxLayout;                    // icon actions right after the title
+    m_actions->setContentsMargins(0, 0, 0, 0);
+    m_actions->setSpacing(2);
+    h->addLayout(m_actions);
     h->addStretch(1);
     m_center = new QHBoxLayout;                     // the free middle of the bar: export + drag controls
     m_center->setContentsMargins(0, 0, 0, 0);
@@ -316,6 +336,7 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
     h->addLayout(m_center);
     h->addStretch(1);
     h->addWidget(m_panelBtn);
+    h->addWidget(m_settingsBtn);
     h->addWidget(m_menuBtn);
     h->addSpacing(8);
     h->addWidget(m_min);
@@ -328,6 +349,12 @@ TitleBar::TitleBar(QWidget *parent) : QWidget(parent) {
 }
 
 void TitleBar::addCenterWidget(QWidget *w) { m_center->addWidget(w); }
+void TitleBar::addActionWidget(QWidget *w) { m_actions->addWidget(w); }
+
+void TitleBar::resizeEvent(QResizeEvent *e) {
+    QWidget::resizeEvent(e);
+    m_chip->setVisible(width() >= 1120);            // the status line below says the same; keeps the bar from crowding
+}
 
 void TitleBar::setOrbMode(bool on) {
     m_logo->setVisible(!on);

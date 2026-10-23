@@ -1,7 +1,7 @@
 #pragma once
 // Pronunciation dictionary editor: search, add, edit, delete, import, export. All persistence is in the Python
 // worker (dictionary action); this dialog never edits files itself.
-#include <QDialog>
+#include "DialogFrame.h"
 #include <QJsonObject>
 #include <functional>
 
@@ -13,7 +13,7 @@ class QLabel;
 class QLineEdit;
 class QTableWidget;
 
-class EntryEditor : public QDialog {
+class EntryEditor : public StyledDialog {
     Q_OBJECT
 public:
     // initial: any subset of the entry fields. repairMode adds the "save in dictionary" choice.
@@ -28,7 +28,7 @@ private:
     QLabel *m_ipaNote;
 };
 
-class DictionaryDialog : public QDialog {
+class DictionaryDialog : public StyledDialog {
     Q_OBJECT
 public:
     DictionaryDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, QWidget *parent = nullptr);

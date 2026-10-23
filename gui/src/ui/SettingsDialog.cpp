@@ -1,4 +1,5 @@
 #include "SettingsDialog.h"
+#include "Controls.h"
 
 #include "../Config.h"
 #include "Buttons.h"
@@ -39,14 +40,22 @@ Section section(const QString &title, const QString &hint = {}) {
     auto *f = new QFrame;
     f->setObjectName("settingsCard");
     auto *v = new QVBoxLayout(f);
-    v->setContentsMargins(18, 14, 18, 16);
-    v->setSpacing(10);
-    v->addWidget(label(title, "settingsCardTitle"));
+    v->setContentsMargins(20, 16, 20, 18);
+    v->setSpacing(12);
+    auto *t = label(title.toUpper(), "settingsCardTitle");
+    QFont tf = t->font();
+    tf.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+    t->setFont(tf);
+    v->addWidget(t);
     if (!hint.isEmpty()) {
         auto *h = label(hint, "muted");
         h->setWordWrap(true);
         v->addWidget(h);
     }
+    auto *rule = new QFrame;                                // hairline between the heading and the controls
+    rule->setObjectName("settingsDivider");
+    rule->setFixedHeight(1);
+    v->addWidget(rule);
     return {f, v};
 }
 
@@ -74,25 +83,24 @@ QWidget *fieldRow(const QString &caption, QLineEdit *edit, QPushButton *browse) 
 
 SettingsDialog::SettingsDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, const QString &apiKey,
                                QWidget *parent)
-    : QDialog(parent) {
+    : StyledDialog(parent, "settings") {
     setObjectName("settingsDialog");
     setWindowTitle(tr("Settings"));
-    setMinimumSize(720, 520);
-    resize(840, 660);
+    setMinimumSize(800, 580);
+    resize(930, 720);
 
     auto *outer = new QVBoxLayout(this);
-    outer->setContentsMargins(20, 18, 20, 16);
+    outer->setContentsMargins(14, 4, 14, 10);
     outer->setSpacing(14);
 
     auto *head = new QVBoxLayout;
     head->setSpacing(2);
-    head->addWidget(label(tr("Settings"), "title"));
     auto *sub = label(tr("Engine location, appearance and pronunciation checks."), "muted");
     head->addWidget(sub);
     outer->addLayout(head);
 
     auto *mid = new QHBoxLayout;
-    mid->setSpacing(16);
+    mid->setSpacing(20);
     m_nav = new QListWidget;
     m_nav->setObjectName("settingsNav");
     m_nav->setFixedWidth(184);
@@ -100,7 +108,8 @@ SettingsDialog::SettingsDialog(ProtocolClient *client, const QString &backend, b
     m_nav->setFocusPolicy(Qt::TabFocus);
     m_nav->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_nav->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_nav->setSpacing(2);
+    m_nav->setSpacing(3);
+    m_nav->viewport()->setCursor(Cursors::pointer());
     new QListWidgetItem(Icons::icon("settings"), tr("General"), m_nav);
     new QListWidgetItem(Icons::icon("pron-check"), tr("Pronunciation"), m_nav);
     mid->addWidget(m_nav);
@@ -147,7 +156,7 @@ QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
     host->setObjectName("settingsPageBody");
     auto *col = new QVBoxLayout(host);
     col->setContentsMargins(0, 0, 8, 8);
-    col->setSpacing(14);
+    col->setSpacing(16);
 
     auto browseBtn = [this](QLineEdit *e, bool dir) {
         auto *b = new AnimatedButton(tr("Browse…"));
@@ -195,19 +204,20 @@ QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
 
     // --- Appearance
     auto look = section(tr("Appearance"));
-    m_theme = new QComboBox;
-    m_theme->addItems(ThemeManager::availableThemes());
-    m_theme->setCurrentText(ThemeManager::instance().current());
-    m_theme->setMaximumWidth(260);
-    look.body->addWidget(field(tr("Theme"), m_theme));
     auto check = [&](const QString &text, const QString &hint, bool on) {
-        auto *c = new QCheckBox(text);
+        auto *row = new QFrame;                             // one toggle: box + title, hint aligned under the title
+        row->setObjectName("settingsRow");
+        auto *rv = new QVBoxLayout(row);
+        rv->setContentsMargins(12, 7, 12, 8);
+        rv->setSpacing(0);
+        auto *c = new FancyCheckBox(text);
         c->setChecked(on);
-        look.body->addWidget(c);
+        rv->addWidget(c);
         auto *h = label(hint, "muted");
-        h->setWordWrap(true);
-        h->setContentsMargins(26, 0, 0, 2);                 // lines up under the text, past the indicator
-        look.body->addWidget(h);
+        h->setProperty("small", true);
+        h->setContentsMargins(FancyCheckBox::kIndent, 0, 0, 0);   // lines up with the text, past the indicator
+        rv->addWidget(h);
+        look.body->addWidget(row);
         return c;
     };
     m_reduce = check(tr("Reduce motion"), tr("Also follows the Windows animation setting."),
@@ -237,7 +247,6 @@ QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
 QString SettingsDialog::pythonExe() const { return m_py->text().trimmed(); }
 QString SettingsDialog::engineRoot() const { return m_root->text().trimmed(); }
 QString SettingsDialog::apiKey() const { return m_key->text().trimmed(); }
-QString SettingsDialog::theme() const { return m_theme->currentText(); }
 bool SettingsDialog::reduceMotion() const { return m_reduce->isChecked(); }
 bool SettingsDialog::effects() const { return m_fx->isChecked(); }
 bool SettingsDialog::sounds() const { return m_snd->isChecked(); }

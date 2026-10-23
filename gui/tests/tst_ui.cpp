@@ -6,11 +6,18 @@
 #include "ui/Frameless.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
+#include "ui/DialogFrame.h"
+#include "ui/DictionaryDialog.h"
+#include "ui/ReviewDialog.h"
+#include "ui/Menus.h"
 #include "ui/SettingsDialog.h"
+#include "ui/VoiceLibraryDialog.h"
 #include "ui/ThemeManager.h"
 #include "ProtocolClient.h"
 
 #include <QApplication>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QComboBox>
 #include <QDir>
 #include <QElapsedTimer>
@@ -58,9 +65,9 @@ private slots:
         QCOMPARE(t.current(), QString("dark"));
         QVERIFY(!t.styleSheet().contains('@'));            // every token substituted
         QVERIFY(t.styleSheet().contains("QFrame#card"));
-        QVERIFY(t.apply("light"));
         QVERIFY(t.token("bg") != "");
-        QVERIFY(t.apply("dark"));
+        QCOMPARE(ThemeManager::availableThemes(), QStringList{"dark"});          // light mode is gone for good
+        QVERIFY(!QFile::exists(":/styles/light.qss"));
     }
     void fallbackStyleOnBrokenStylesheet() {
         QTemporaryDir d;
@@ -352,16 +359,9 @@ private slots:
         QTest::qWait(250);
         QCOMPARE(c.depth(), d);                                                    // a hidden card does not keep animating
     }
-    void themeSwitchKeepsRendering() {
-        QVERIFY(ThemeManager::instance().apply("light"));
-        const QImage light = w->grab().toImage();
-        QVERIFY(!light.isNull());
-        QVERIFY(ThemeManager::instance().apply("dark"));
-        QVERIFY(w->grab().toImage() != light);
-    }
     void settingsDialogIsStyled() {
         ProtocolClient client;
-        for (const char *theme : {"dark", "light"}) {
+        for (const char *theme : {"dark"}) {
             QVERIFY(ThemeManager::instance().apply(theme));
             SettingsDialog d(&client, "mock", false, "secret-key");
             d.show();
@@ -379,6 +379,92 @@ private slots:
             }
         }
         QVERIFY(ThemeManager::instance().apply("dark"));
+    }
+    void titleBarHoldsTheActionsAndSettings() {
+        for (const char *n : {"importButton", "pasteButton", "clearButton", "checkTextButton", "settingsButton"}) {
+            auto *b = get<QPushButton>(n);
+            QVERIFY2(b->text().isEmpty(), n);                                   // icon only, the tooltip says what it does
+            QVERIFY2(!b->icon().isNull(), n);
+            QVERIFY2(!b->toolTip().isEmpty(), n);
+            QVERIFY2(b->property("variant").toString() == "tool", n);
+            bool inBar = false;
+            for (QWidget *p = b->parentWidget(); p; p = p->parentWidget()) inBar = inBar || p->objectName() == "titleBar";
+            QVERIFY2(inBar, n);
+        }
+    }
+    void spaceTogglesPlaybackOnlyOutsideTextFields() {
+        auto *ed = get<QPlainTextEdit>("textEditor");
+        ed->setFocus();
+        const QString before = ed->toPlainText();
+        QTest::keyClick(ed, Qt::Key_Space);                                  // typed into the editor, not a shortcut
+        QCOMPARE(ed->toPlainText().size(), before.size() + 1);
+        ed->setPlainText(before);
+    }
+    void altEnterIsBoundToGenerate() {
+        bool found = false;
+        for (QAction *a : w->findChildren<QAction *>())
+            if (a->text() == "Generate speech") {
+                const auto keys = a->shortcuts();
+                found = keys.contains(QKeySequence("Alt+Return")) && keys.contains(QKeySequence("Alt+Enter"));
+            }
+        QVERIFY(found);
+    }
+    void dialogsUseTheSharedFrame() {
+        ProtocolClient client;
+        SettingsDialog d(&client, "mock", false, "");
+        QVERIFY(d.customFrame());
+        QVERIFY(d.windowFlags().testFlag(Qt::FramelessWindowHint));
+        QVERIFY(d.findChild<DialogTitleBar *>());
+        QCOMPARE(d.contentsMargins().top(), StyledDialog::kInset + StyledDialog::kBar);
+        VoiceLibraryDialog lib({{"a", "Anna", "female", "calm", {}}, {"b", "Ben", "male", "warm", {}}}, "a");
+        QVERIFY(lib.findChild<DialogTitleBar *>());
+        QCOMPARE(lib.findChildren<PlayButton *>().size(), 2);
+        const QString dir = qEnvironmentVariable("TTS_SHOT_DIR");
+        if (!dir.isEmpty()) {
+            lib.resize(860, 560);
+            lib.show();
+            QTest::qWait(150);
+            lib.grab().save(QDir(dir).filePath("voice-library.png"));
+            auto *pb = lib.findChildren<PlayButton *>().first();
+            pb->setPlaying(true);
+            pb->setProgress(0.4);
+            QTest::qWait(350);
+            pb->grab().save(QDir(dir).filePath("play-button-playing.png"));
+            w->grab().save(QDir(dir).filePath("main.png"));
+            FancyMenu m;
+            m.addAction(Icons::icon("import"), "Import text…")->setShortcut(QKeySequence::Open);
+            m.addAction(Icons::icon("settings"), "Settings…")->setShortcut(QKeySequence("Ctrl+,"));
+            m.addSeparator();
+            m.addAction(Icons::icon("window-close"), "Exit");
+            m.popup(QPoint(40, 40));
+            QTest::qWait(150);
+            m.grab().save(QDir(dir).filePath("menu.png"));
+            m.hide();
+            DictionaryDialog dd(&client, "mock", false);
+            dd.show();
+            QTest::qWait(300);
+            dd.grab().save(QDir(dir).filePath("dictionary.png"));
+            QJsonObject analysis{{"counts", QJsonObject{{"review", 2}}},
+                                 {"findings", QJsonArray{QJsonObject{{"severity", "review"}, {"kind", "name"}, {"text", "Nguyen"}, {"reason", "unusual name"}},
+                                                         QJsonObject{{"severity", "info"}, {"kind", "number"}, {"text", "1999"}, {"reason", "year or quantity?"}}}}};
+            ReviewDialog rd(&client, analysis, "Nguyen in 1999", "en", "mock", {});
+            rd.show();
+            QTest::qWait(200);
+            rd.grab().save(QDir(dir).filePath("review.png"));
+            EntryEditor ee({}, false, true);
+            ee.show();
+            QTest::qWait(200);
+            ee.grab().save(QDir(dir).filePath("entry.png"));
+            QTimer::singleShot(400, [dir] {
+                for (QWidget *tw : QApplication::topLevelWidgets())
+                    if (tw->objectName() == "messageDialog") {
+                        tw->grab().save(QDir(dir).filePath("message.png"));
+                        tw->close();
+                    }
+            });
+            Msg::question(nullptr, "Keep this correction?", "Add it to the pronunciation dictionary so it is used every time? Nothing is uploaded.",
+                          QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel);
+        }
     }
     void stateIconSpinsOnlyWhenBusyAndVisible() {
         StateIcon s;

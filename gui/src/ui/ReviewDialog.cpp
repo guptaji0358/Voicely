@@ -30,12 +30,14 @@ QTableWidget *table(const char *name, const QStringList &heads) {
 
 ReviewDialog::ReviewDialog(ProtocolClient *client, const QJsonObject &analysis, const QString &text, const QString &language,
                            const QString &backend, const QJsonObject &llm, QWidget *parent)
-    : QDialog(parent), m_client(client), m_text(text), m_language(language), m_backend(backend),
+    : StyledDialog(parent, "pron-check"), m_client(client), m_text(text), m_language(language), m_backend(backend),
       m_ipa(analysis.value("controls").toObject().value("ipa").toBool()), m_llm(llm) {
     setWindowTitle("Review pronunciation");
     setObjectName("reviewDialog");
     resize(780, 520);
     auto *v = new QVBoxLayout(this);
+    v->setContentsMargins(14, 4, 14, 10);
+    v->setSpacing(10);
     auto *intro = new QLabel(QString("%1 item(s) may need attention before speaking. Your text is not changed; add a pronunciation "
                                      "for anything that matters, or continue as is.")
                                  .arg(analysis.value("counts").toObject().value("review").toInt()));
@@ -133,7 +135,7 @@ void ReviewDialog::addForRow() {
 
 void ReviewDialog::askAi() {
     if (m_llm.value("network").toBool()) {
-        const auto a = QMessageBox::question(this, "Send text to " + m_llm.value("provider").toString() + "?",
+        const auto a = Msg::question(this, "Send text to " + m_llm.value("provider").toString() + "?",
             QString("To get suggestions, up to %1 characters of your text are sent over the network to the “%2” AI provider "
                     "(model %3). Audio is never sent. Continue?")
                 .arg(m_llm.value("max_input_chars").toInt()).arg(m_llm.value("provider").toString(), m_llm.value("model").toString()));

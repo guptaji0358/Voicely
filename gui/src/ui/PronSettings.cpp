@@ -1,6 +1,8 @@
 #include "PronSettings.h"
+#include "Controls.h"
 
 #include "Buttons.h"
+#include "DialogFrame.h"
 #include "DictionaryDialog.h"
 #include "Icons.h"
 #include "ProtocolClient.h"
@@ -55,7 +57,7 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
 
     auto *llm = new QGroupBox("AI pronunciation assistance (optional)");
     auto *ll = new QVBoxLayout(llm);
-    m_llmOn = new QCheckBox("Enable AI suggestions for ambiguous words");
+    m_llmOn = new FancyCheckBox("Enable AI suggestions for ambiguous words");
     m_llmOn->setObjectName("llmEnable");
     m_provider = new QComboBox;
     m_provider->setObjectName("llmProvider");
@@ -63,7 +65,7 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
     m_model = new QLineEdit;
     m_model->setObjectName("llmModel");
     m_model->setPlaceholderText("model name");
-    m_examples = new QCheckBox("Include my approved corrections as examples in the request");
+    m_examples = new FancyCheckBox("Include my approved corrections as examples in the request");
     m_llmStatus = note();
     ll->addWidget(m_llmOn);
     auto *row = new QHBoxLayout;
@@ -80,9 +82,9 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
 
     auto *fb = new QGroupBox("Learning from my corrections (local)");
     auto *fl = new QVBoxLayout(fb);
-    m_fbOn = new QCheckBox("Save corrections I approve on this computer");
+    m_fbOn = new FancyCheckBox("Save corrections I approve on this computer");
     m_fbOn->setObjectName("fbConsent");
-    m_fbAudio = new QCheckBox("Also keep short audio samples of those corrections");
+    m_fbAudio = new FancyCheckBox("Also keep short audio samples of those corrections");
     m_fbAudio->setObjectName("fbAudioConsent");
     m_fbStatus = note();
     auto *fr = new QHBoxLayout;
@@ -105,13 +107,13 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
     v->addStretch(1);
 
     connect(m_download, &QPushButton::clicked, this, [this] {
-        if (QMessageBox::question(this, "Download recognition model",
+        if (Msg::question(this, "Download recognition model",
                 "This downloads the speech-recognition model (about 150 MB) from Hugging Face. Only the model download uses the "
                 "network; none of your text or audio is sent. Continue?") != QMessageBox::Yes) return;
         m_download->setEnabled(false);
         m_asrStatus->setText("Downloading the model… (this can take a few minutes)");
         m_client->call("asr_download", {{"confirm", true}}, this, [this](const QString &st, const QJsonObject &r) {
-            if (st != "success") QMessageBox::warning(this, "Download failed", r.value("message").toString());
+            if (st != "success") Msg::warning(this, "Download failed", r.value("message").toString());
             refresh();
             emit changed();
         }, 30 * 60 * 1000);
@@ -122,14 +124,14 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
                                                                   {"model", m_model->text().trimmed()},
                                                                   {"use_examples", m_examples->isChecked()}}}},
                        this, [this](const QString &st, const QJsonObject &r) {
-            if (st != "success") QMessageBox::warning(this, "AI settings", r.value("message").toString());
+            if (st != "success") Msg::warning(this, "AI settings", r.value("message").toString());
             refresh();
             emit changed();
         });
     };
     connect(m_llmOn, &QCheckBox::clicked, this, pushLlm);
     connect(m_examples, &QCheckBox::clicked, this, [this, pushLlm] {
-        if (m_examples->isChecked() && QMessageBox::question(this, "Send examples?",
+        if (m_examples->isChecked() && Msg::question(this, "Send examples?",
                 "Your approved corrections will be included in each AI request, so they are sent to the provider too. Enable?") != QMessageBox::Yes) {
             m_examples->setChecked(false);
             return;
@@ -149,21 +151,22 @@ PronSettings::PronSettings(ProtocolClient *client, const QString &backend, bool 
         const QString d = QFileDialog::getExistingDirectory(this, "Export feedback to folder");
         if (d.isEmpty()) return;
         m_client->call("feedback", {{"op", "export"}, {"dest_dir", d}}, this, [this](const QString &st, const QJsonObject &r) {
-            QMessageBox::information(this, "Export", st == "success" ? QString("Exported %1 record(s) to\n%2").arg(r.value("records").toInt()).arg(r.value("path").toString())
+            Msg::information(this, "Export", st == "success" ? QString("Exported %1 record(s) to\n%2").arg(r.value("records").toInt()).arg(r.value("path").toString())
                                                                      : r.value("message").toString());
         });
     });
     connect(del, &QPushButton::clicked, this, [this] {
-        if (QMessageBox::question(this, "Delete all feedback", "Delete every saved correction record and audio sample? This cannot be undone.") != QMessageBox::Yes) return;
+        if (Msg::question(this, "Delete all feedback", "Delete every saved correction record and audio sample? This cannot be undone.") != QMessageBox::Yes) return;
         m_client->call("feedback", {{"op", "delete_all"}}, this, [this](const QString &, const QJsonObject &) { refresh(); });
     });
     connect(view, &QPushButton::clicked, this, [this] {
         m_client->call("feedback", {{"op", "list"}}, this, [this](const QString &st, const QJsonObject &r) {
             if (st != "success") return;
-            QDialog d(this);
+            StyledDialog d(this, "save-feedback");
             d.setWindowTitle("Saved corrections");
             d.resize(700, 360);
             auto *l = new QVBoxLayout(&d);
+            l->setContentsMargins(14, 4, 14, 10);
             auto *t = new QTableWidget(0, 5);
             t->setHorizontalHeaderLabels({"Date", "Word", "Read as", "Worked", "Audio"});
             t->horizontalHeader()->setStretchLastSection(true);

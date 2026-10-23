@@ -1,8 +1,10 @@
 #include "MainWindow.h"
+#include "ui/Controls.h"
 
 #include "Config.h"
 #include "ProtocolClient.h"
 #include "ui/Buttons.h"
+#include "ui/DialogFrame.h"
 #include "MemoryTrim.h"
 #include "ui/AudioDragHandle.h"
 #include "ui/Card.h"
@@ -14,6 +16,7 @@
 #include "ui/GlStage.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
+#include "ui/Menus.h"
 #include "ui/Motion.h"
 #include "ui/PronSettings.h"
 #include "ui/QaPanel.h"
@@ -22,9 +25,9 @@
 #include "ui/ModelLabDialog.h"
 #include "ui/ThemeManager.h"
 #include "SecretStore.h"
-#include "ui/VoiceCarousel.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QAudioBufferOutput>
 #include <QAudioDevice>
 #include <QAudioOutput>
@@ -248,7 +251,17 @@ void MainWindow::buildActions() {
     };
     mk("Import text…", "import", QKeySequence::Open, [this] { importText(); });
     mk("Check pronunciation", "pron-check", QKeySequence("Ctrl+Shift+P"), [this] { if (m_state == State::Idle) analyzeText(false); });
-    mk("Generate speech", "generate", QKeySequence("Ctrl+Return"), [this] { onGenerateClicked(); });
+    auto *gen = mk("Generate speech", "generate", QKeySequence("Alt+Return"), [this] { onGenerateClicked(); });
+    gen->setShortcuts({QKeySequence("Alt+Return"), QKeySequence("Alt+Enter"), QKeySequence("Ctrl+Return")});
+    mk("Play / pause", "play", QKeySequence(Qt::Key_Space), [this] {
+        // Space belongs to whatever has the keyboard: text fields keep it (they claim the key before it gets here),
+        // a focused button or list is operated by it, everything else toggles playback.
+        QWidget *f = QApplication::focusWidget();
+        if (auto *b = qobject_cast<QAbstractButton *>(f)) { b->click(); return; }
+        if (auto *c = qobject_cast<QComboBox *>(f)) { c->showPopup(); return; }
+        togglePlay();
+    });
+    mk("Stop playback", "stop", QKeySequence(Qt::Key_Q), [this] { stopPlay(); });
     mk("Recheck speech", "recheck", QKeySequence("Ctrl+R"), [this] { recheckSpeech(); });
     mk("Pronunciation dictionary…", "dictionary", QKeySequence("Ctrl+D"), [this] { openDictionary(); });
     mk("Model Lab…", "ai", QKeySequence("Ctrl+M"), [this] { openModelLab(); });
@@ -320,6 +333,28 @@ void MainWindow::buildUi() {
     m_text->viewport()->setCursor(Qt::IBeamCursor);
     m_text->setObjectName("textEditor");
     m_text->setMinimumHeight(240);
+    m_text->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_text, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos) {
+        auto *menu = new FancyMenu(this);
+        menu->setAttribute(Qt::WA_DeleteOnClose);
+        const bool sel = m_text->textCursor().hasSelection();
+        auto add = [&](const QString &label, const char *icon, const QKeySequence &key, bool on, auto fn) {
+            auto *a = menu->addAction(icon ? Icons::icon(icon) : QIcon(), label);
+            a->setShortcut(key);
+            a->setEnabled(on);
+            connect(a, &QAction::triggered, m_text, fn);
+        };
+        add("Undo", nullptr, QKeySequence::Undo, m_text->document()->isUndoAvailable(), [this] { m_text->undo(); });
+        add("Redo", nullptr, QKeySequence::Redo, m_text->document()->isRedoAvailable(), [this] { m_text->redo(); });
+        menu->addSeparator();
+        add("Cut", nullptr, QKeySequence::Cut, sel, [this] { m_text->cut(); });
+        add("Copy", nullptr, QKeySequence::Copy, sel, [this] { m_text->copy(); });
+        add("Paste", "paste", QKeySequence::Paste, m_text->canPaste(), [this] { m_text->paste(); });
+        add("Select all", nullptr, QKeySequence::SelectAll, !m_text->document()->isEmpty(), [this] { m_text->selectAll(); });
+        menu->addSeparator();
+        add("Clear", "clear", QKeySequence(), !m_text->document()->isEmpty(), [this] { m_text->clear(); });
+        menu->popup(m_text->viewport()->mapToGlobal(pos));
+    });
     m_inputEmpty = new EmptyState("empty-input", "Nothing to read yet", "Type, paste or import text to begin.", false, m_text->viewport());
     m_inputEmpty->setGeometry(m_text->viewport()->rect());
     m_text->viewport()->installEventFilter(this);
@@ -330,15 +365,31 @@ void MainWindow::buildUi() {
     m_clear = button("Clear", "clear", "clearButton");
     m_checkText = button("Check", "pron-check", "checkTextButton");
     m_checkText->setToolTip("Find names, numbers, acronyms and ambiguous words that may be mispronounced (the text is not changed)");
+    if (custom) {                                   // text actions live in the title bar as icon buttons
+        struct Icon { QPushButton *b; const char *tip; };
+        for (const Icon &i : {Icon{m_import, "Import text from a file (Ctrl+O)"}, Icon{m_paste, "Paste text from the clipboard (Ctrl+V)"},
+                              Icon{m_clear, "Clear the text"},
+                              Icon{m_checkText, "Check pronunciation: find names, numbers, acronyms and ambiguous words that may be "
+                                                "mispronounced (Ctrl+Shift+P). The text is not changed."}}) {
+            i.b->setAccessibleName(i.b->text().remove(QChar(0x2026)));
+            i.b->setText(QString());
+            i.b->setProperty("variant", "tool");
+            i.b->setIconSize(QSize(18, 18));
+            i.b->setToolTip(i.tip);
+            m_titleBar->addActionWidget(i.b);
+        }
+    }
     m_textBadge = new QLabel;
     m_textBadge->setObjectName("qaNote");
     m_counts = new QLabel("0 characters · 0 words");
     m_counts->setToolTip("Characters and words in the text");
     m_counts->setObjectName("muted");
-    tr->addWidget(m_import);
-    tr->addWidget(m_paste);
-    tr->addWidget(m_clear);
-    tr->addWidget(m_checkText);
+    if (!custom) {
+        tr->addWidget(m_import);
+        tr->addWidget(m_paste);
+        tr->addWidget(m_clear);
+        tr->addWidget(m_checkText);
+    }
     tr->addWidget(m_textBadge);
     tr->addStretch(1);
     tr->addWidget(m_counts);
@@ -406,7 +457,9 @@ void MainWindow::buildUi() {
     m_dragHandle->setProvider([this] { return tempAudioFile(); });
     m_success = new SuccessBadge;
     if (custom) {                                   // export + drag controls live in the free middle of the title bar
-        m_bitrate->setFixedWidth(96);
+        m_bitrate->setFixedWidth(92);
+        m_saveMp3->setText("MP3");
+        m_saveWav->setText("WAV");
         m_titleBar->addCenterWidget(m_bitrate);
         m_titleBar->addCenterWidget(m_saveMp3);
         m_titleBar->addCenterWidget(m_saveWav);
@@ -526,12 +579,10 @@ void MainWindow::buildUi() {
     m_voiceInfoLabel->setProperty("small", true);
     m_voiceInfoLabel->setWordWrap(true);
     vl->addWidget(m_voiceInfoLabel);
-    m_carousel = new VoiceCarousel(m_voice);
-    vl->addWidget(m_carousel);
-    auto *browse = new QPushButton("Browse all voices…");
+    auto *browse = new AnimatedButton("Change voice…");
     browse->setObjectName("browseVoices");
-    browse->setCursor(Qt::PointingHandCursor);
-    browse->setToolTip("Open the voice library: search, filter and hear every voice");
+    browse->setCursor(Cursors::pointer());
+    browse->setToolTip("Open the voice library: search, filter, hear and pick a voice");
     vl->addWidget(browse);
     connect(browse, &QPushButton::clicked, this, &MainWindow::openVoiceLibrary);
     connect(m_voice, &QComboBox::currentIndexChanged, this, [this] {
@@ -583,11 +634,29 @@ void MainWindow::buildUi() {
     m_progress = new SmoothProgressBar;
     m_progress->setObjectName("progressBar");
     gl->addWidget(m_progress);
-    m_precheck = new QCheckBox("Check pronunciation before generating");
+    m_precheck = new FancyCheckBox("Check pronunciation before generating");
     m_precheck->setObjectName("precheckBox");
     m_precheck->setChecked(Config::settings().value("precheck", true).toBool());
     m_precheck->setToolTip("Analyses the text for names, numbers, acronyms and ambiguous words first; the text is never rewritten");
     gl->addWidget(m_precheck);
+    m_stretch = new FancyCheckBox("Stretch drawn-out words (helloooo)");
+    m_stretch->setObjectName("stretchBox");
+    m_stretch->setChecked(Config::settings().value("stretch", true).toBool());
+    m_stretch->setToolTip("When a word is typed with repeated letters, like \"helloooo\", the voice holds that sound longer");
+    gl->addWidget(m_stretch);
+    m_stretchAmount = new QSlider(Qt::Horizontal);
+    m_stretchAmount->setObjectName("stretchAmount");
+    m_stretchAmount->setRange(25, 300);
+    m_stretchAmount->setValue(Config::settings().value("stretchAmount", 100).toInt());
+    m_stretchAmount->setToolTip("How long drawn-out sounds are held (100 = normal)");
+    m_stretchAmount->setEnabled(m_stretch->isChecked());
+    gl->addWidget(group("Hold length:", m_stretchAmount));
+    connect(m_stretch, &QCheckBox::toggled, this, [this](bool on) {
+        Config::settings().setValue("stretch", on);
+        m_stretchAmount->setEnabled(on);
+    });
+    connect(m_stretchAmount, &QSlider::valueChanged, this,
+            [](int v) { Config::settings().setValue("stretchAmount", v); });
     right->addWidget(gc);
 
     auto *qc = newCard();
@@ -617,11 +686,15 @@ void MainWindow::buildUi() {
     m_logToggle->setIconSize(QSize(14, 14));
     m_logToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     m_logToggle->setCheckable(true);
-    m_settingsBtn = button("Settings", "settings", "settingsButton");
     sr->addWidget(m_dot);
     sr->addWidget(m_status, 1);
     sr->addWidget(m_logToggle);
-    sr->addWidget(m_settingsBtn);
+    if (custom) {
+        m_settingsBtn = m_titleBar->settingsButton();       // the gear lives in the title bar
+    } else {
+        m_settingsBtn = button("Settings", "settings", "settingsButton");
+        sr->addWidget(m_settingsBtn);
+    }
     body->addLayout(sr);
     m_log = new QPlainTextEdit;
     m_log->setObjectName("logView");
@@ -1358,6 +1431,7 @@ void MainWindow::generate(bool testVoice) {
         p["emotion"] = m_emotion->currentData().toString();
         p["emotion_intensity"] = m_intensity->value() / 100.0;
     }
+    p["stretch"] = m_stretch->isChecked() ? m_stretchAmount->value() / 100.0 : 0.0;
     if (m_style->isVisible() && !m_style->text().trimmed().isEmpty()) p["style"] = m_style->text().trimmed();
     m_jobIsTest = testVoice;
     m_job = testVoice ? Job::Preview : Job::Synth;
@@ -1503,7 +1577,7 @@ void MainWindow::runRepair(const QString &mode, const QJsonArray &chunks, const 
     const QJsonObject llm = m_health.value("llm").toObject();
     if (mode == "auto" && llm.value("enabled").toBool() && llm.value("available").toBool()) {
         const bool net = llm.value("network").toBool();
-        const auto a = QMessageBox::question(this, "Use AI suggestions?",
+        const auto a = Msg::question(this, "Use AI suggestions?",
             net ? QString("Auto-repair can also ask the “%1” AI provider for pronunciation suggestions. That sends the sentences "
                           "that need repair to the provider over the network. Use AI suggestions?").arg(llm.value("provider").toString())
                 : "Auto-repair can also ask the configured AI model for pronunciation suggestions. Use AI suggestions?",
@@ -1587,7 +1661,7 @@ void MainWindow::discardRepair() {
 void MainWindow::onSaveFeedback(const QJsonObject &attempt) {
     const QString term = attempt.value("term").toString();
     const QJsonObject cand = attempt.value("candidate").toObject();
-    const auto add = QMessageBox::question(this, "Keep this correction?",
+    const auto add = Msg::question(this, "Keep this correction?",
         QString("The recheck confirmed that “%1” is now recognised correctly with “%2”.\n\nAdd it to your pronunciation dictionary so "
                 "it is used automatically from now on?").arg(term, cand.value("hint").toString().isEmpty() ? "IPA " + cand.value("ipa").toString()
                                                                                                          : cand.value("hint").toString()),
@@ -1610,7 +1684,7 @@ void MainWindow::onSaveFeedback(const QJsonObject &attempt) {
         m_client->call("feedback", {{"op", "status"}}, this, [this, rec](const QString &st, const QJsonObject &s) {
             if (st != "success") return;
             if (!s.value("consent").toObject().value("store_feedback").toBool()) {
-                if (QMessageBox::question(this, "Save corrections locally?",
+                if (Msg::question(this, "Save corrections locally?",
                         "Save approved corrections on this computer so they can be inspected, exported, deleted and used to test future "
                         "dictionary changes? Nothing is uploaded and no AI model is trained.") != QMessageBox::Yes) return;
                 m_client->call("feedback", {{"op", "set_consent"}, {"store_feedback", true}}, this, [](const QString &, const QJsonObject &) {});
@@ -1886,11 +1960,6 @@ void MainWindow::openSettings() {
     Config::settings().setValue("tempKeepDays", d.tempKeepDays());
     UiSounds::instance().setEnabled(d.sounds());
     applyEffects();
-    Config::settings().setValue("theme", d.theme());
-    if (d.theme() != ThemeManager::instance().current()) {
-        ThemeManager::instance().apply(d.theme());
-        if (ThemeManager::instance().usingFallback()) setStatus(ThemeManager::instance().lastError(), true);
-    }
     m_sessionApiKey = d.apiKey();
     SecretStore::saveApiKey(m_sessionApiKey);
     if (m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking || m_state == State::Repairing)

@@ -1,4 +1,5 @@
 #include "VoiceCarousel.h"
+#include "Controls.h"
 
 #include "Icons.h"
 #include "ThemeManager.h"
@@ -22,7 +23,7 @@ VoiceChip::VoiceChip(const QString &name, QWidget *parent) : QAbstractButton(par
     setText(name);
     setCheckable(true);
     setAutoExclusive(false);
-    setCursor(Qt::PointingHandCursor);
+    setCursor(Cursors::pointer());
     setFocusPolicy(Qt::TabFocus);
     setToolTip(name);
     setAccessibleName(name);

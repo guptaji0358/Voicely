@@ -119,7 +119,7 @@ private slots:
             auto *ed = qobject_cast<EntryEditor *>(m);
             QVERIFY(ed);
             ed->findChild<QLineEdit *>("entryHint")->setText("nwin");
-            ed->findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->click();
+            ed->findChild<QPushButton *>("primary")->click();
         });
         QTest::mouseClick(get<QPushButton>("correctButton"), Qt::LeftButton);
         QTRY_COMPARE_WITH_TIMEOUT(w->state(), MainWindow::State::Repairing, 20000);

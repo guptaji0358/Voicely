@@ -39,7 +39,6 @@ class QLabel;
 class QLineEdit;
 class QMediaPlayer;
 class QScrollArea;
-class VoiceCarousel;
 class DropOverlay;
 class AudioDragHandle;
 class QMimeData;
@@ -172,7 +171,6 @@ private:
     QString m_dragFormat = "wav", m_tempStem, m_tempFor, m_tempWav, m_tempMp3;
     bool m_tempExport = false, m_tempUsed = false;
     QScrollArea *m_sideScroll = nullptr;
-    VoiceCarousel *m_carousel = nullptr;
     bool m_panelOpen = true;
     TitleBar *m_titleBar;
     QaPanel *m_qa;
@@ -185,6 +183,8 @@ private:
     QPushButton *m_settingsBtn, *m_import, *m_clear, *m_paste, *m_generate, *m_play, *m_stop,
         *m_saveMp3, *m_saveWav, *m_cancel, *m_checkText, *m_verOriginal, *m_verRepaired;
     QCheckBox *m_precheck;
+    QCheckBox *m_stretch = nullptr;
+    QSlider *m_stretchAmount = nullptr;
     QWidget *m_versionBar;
     PreviewButton *m_preview;
     QPlainTextEdit *m_text, *m_log;

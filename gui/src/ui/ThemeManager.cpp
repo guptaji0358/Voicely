@@ -69,10 +69,10 @@ ThemeManager &ThemeManager::instance() {
     return m;
 }
 
-QStringList ThemeManager::availableThemes() { return {"dark", "light"}; }
+QStringList ThemeManager::availableThemes() { return {"dark"}; }
 
 void ThemeManager::ensureApplied() {
-    if (!m_applied) apply(Config::settings().value("theme", "dark").toString());
+    if (!m_applied) apply("dark");
 }
 
 bool ThemeManager::apply(const QString &theme) {

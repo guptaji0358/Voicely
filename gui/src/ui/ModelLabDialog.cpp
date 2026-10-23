@@ -1,4 +1,5 @@
 #include "ModelLabDialog.h"
+#include "Controls.h"
 
 #include "Buttons.h"
 #include "Config.h"
@@ -105,12 +106,12 @@ QString ModelLabDialog::stateText(const QString &s, bool training) {
     return tr("No model yet");
 }
 
-ModelLabDialog::ModelLabDialog(const QProcessEnvironment &env, QWidget *parent) : QDialog(parent), m_client(new ProtocolClient(this)) {
+ModelLabDialog::ModelLabDialog(const QProcessEnvironment &env, QWidget *parent) : StyledDialog(parent, "ai"), m_client(new ProtocolClient(this)) {
     setObjectName("modelLab");
     setWindowTitle(tr("Model Lab"));
     setWindowIcon(Icons::icon("ai"));
     m_confirm = [this](const QString &title, const QString &text) {
-        return QMessageBox::question(this, title, text) == QMessageBox::Yes;
+        return Msg::question(this, title, text) == QMessageBox::Yes;
     };
     resize(1100, 800);
     setMinimumSize(920, 640);
@@ -169,7 +170,7 @@ ModelLabDialog::~ModelLabDialog() {
 
 void ModelLabDialog::buildUi() {
     auto *root = new QVBoxLayout(this);
-    root->setContentsMargins(14, 12, 14, 12);
+    root->setContentsMargins(10, 4, 10, 8);
     root->setSpacing(10);
 
     auto *head = new QHBoxLayout;
@@ -178,7 +179,7 @@ void ModelLabDialog::buildUi() {
     m_status = new QLabel(tr("Starting Model Lab worker...")); m_status->setObjectName("statusLabel");
     m_status->setWordWrap(true);
     m_stateLabel = new QLabel(tr("No model yet")); m_stateLabel->setObjectName("labState");
-    m_stateLabel->setStyleSheet("padding:3px 10px; border-radius:10px; background:palette(mid);");
+    m_stateLabel->setStyleSheet("padding:3px 10px; border-radius:10px; background:rgba(255,255,255,0.10);");
     head->addWidget(title); head->addSpacing(10); head->addWidget(m_icon); head->addWidget(m_status, 1); head->addWidget(m_stateLabel);
     root->addLayout(head);
     m_hardware = new QLabel; m_hardware->setObjectName("muted");
@@ -201,7 +202,7 @@ void ModelLabDialog::buildUi() {
 
     auto *lg = new QGroupBox(tr("Learn from my speech"));
     auto *ll = new QVBoxLayout(lg);
-    m_consent = new QCheckBox(tr("Let the model learn from the speech I generate (kept only on this computer)"));
+    m_consent = new FancyCheckBox(tr("Let the model learn from the speech I generate (kept only on this computer)"));
     m_consent->setObjectName("labConsent");
     m_consent->setToolTip(tr("Off by default. When on, the TEXT of each generation is remembered; Recheck Speech labels it (issues found / verified). "
                              "Audio is not stored. Nothing is uploaded."));

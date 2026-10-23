@@ -5,6 +5,7 @@
 #include "ThemeManager.h"
 
 #include <QEasingCurve>
+#include <QPainterPath>
 #include <QLinearGradient>
 #include <QStyleOptionToolButton>
 #include <QVariantAnimation>
@@ -48,9 +49,10 @@ void ButtonFx::reset() {
 void ButtonFx::paint(QPainter &p) const {
     if (!m_w->isEnabled()) return;
     const QString variant = m_w->property("variant").toString();
-    if (variant != "caption" && variant != "ghost") {
+    if (variant != "caption" && variant != "ghost" && variant != "tool") {
         // Raised look: a soft gloss on the upper half and a dark lower edge; both flatten while pressed.
-        const qreal radius = ThemeManager::instance().pixels("radius", 6);
+        const qreal radius = m_w->property("fxRadius").isValid() ? m_w->property("fxRadius").toReal()
+                                                                  : ThemeManager::instance().pixels("radius", 6);
         const QRectF r = QRectF(m_w->rect()).adjusted(0.5, 0.5, -0.5, -0.5);
         p.setRenderHint(QPainter::Antialiasing);
         const qreal lift = 1.0 - 0.85 * m_press;
@@ -67,7 +69,7 @@ void ButtonFx::paint(QPainter &p) const {
     }
     if (m_hover <= 0.001 && m_press <= 0.001) return;
     const auto &theme = ThemeManager::instance();
-    const qreal radius = theme.pixels("radius", 6);
+    const qreal radius = m_w->property("fxRadius").isValid() ? m_w->property("fxRadius").toReal() : theme.pixels("radius", 6);
     const QRectF r = QRectF(m_w->rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
@@ -174,5 +176,181 @@ void PreviewButton::paintEvent(QPaintEvent *e) {
             const qreal x = c.x() + (i - 1) * (bw + gap) - bw / 2;
             p.drawRoundedRect(QRectF(x, c.y() - h / 2, bw, h), bw / 2, bw / 2);
         }
+    }
+}
+
+// ---------------------------------------------------------------- PlayButton
+PlayButton::PlayButton(QWidget *parent) : QAbstractButton(parent) {
+    setFocusPolicy(Qt::TabFocus);
+    setAttribute(Qt::WA_Hover);
+    auto make = [this](qreal *target) {
+        auto *a = new QVariantAnimation(this);
+        a->setEasingCurve(QEasingCurve::OutCubic);
+        connect(a, &QVariantAnimation::valueChanged, this, [this, target](const QVariant &v) {
+            *target = v.toReal();
+            update();
+        });
+        return a;
+    };
+    m_hoverAnim = make(&m_hover);
+    m_pressAnim = make(&m_press);
+    m_morphAnim = make(&m_morph);
+    m_pulseAnim = new QVariantAnimation(this);
+    m_pulseAnim->setStartValue(0.0);
+    m_pulseAnim->setEndValue(1.0);
+    m_pulseAnim->setDuration(1300);
+    m_pulseAnim->setLoopCount(-1);
+    connect(m_pulseAnim, &QVariantAnimation::valueChanged, this, [this](const QVariant &v) {
+        m_pulse = v.toReal();
+        update();
+    });
+}
+
+void PlayButton::animate(QVariantAnimation *a, qreal from, qreal to, int ms) {
+    a->stop();
+    const int d = Motion::ms(ms);
+    if (d == 0 || !isVisible()) {
+        a->setStartValue(to);
+        a->setEndValue(to);
+        a->setDuration(1);
+    } else {
+        a->setStartValue(from);
+        a->setEndValue(to);
+        a->setDuration(d);
+    }
+    a->start();
+}
+
+void PlayButton::setPlaying(bool on) {
+    if (on == m_playing) return;
+    m_playing = on;
+    animate(m_morphAnim, m_morph, on ? 1 : 0, 200);
+    if (!on) m_progress = -1;
+    syncPulse();
+    update();
+}
+
+void PlayButton::setProgress(qreal p) {
+    m_progress = p < 0 ? -1 : qBound<qreal>(0, p, 1);
+    update();
+}
+
+void PlayButton::syncPulse() {
+    const bool run = m_playing && isVisible() && !Motion::reduced();
+    if (run && m_pulseAnim->state() != QAbstractAnimation::Running) m_pulseAnim->start();
+    if (!run) {
+        m_pulseAnim->stop();
+        m_pulse = 0;
+    }
+}
+
+void PlayButton::enterEvent(QEnterEvent *e) { QAbstractButton::enterEvent(e); animate(m_hoverAnim, m_hover, 1, 140); }
+void PlayButton::leaveEvent(QEvent *e) {
+    QAbstractButton::leaveEvent(e);
+    animate(m_hoverAnim, m_hover, 0, 200);
+    animate(m_pressAnim, m_press, 0, 120);
+}
+void PlayButton::mousePressEvent(QMouseEvent *e) {
+    QAbstractButton::mousePressEvent(e);
+    animate(m_pressAnim, m_press, 1, 60);
+}
+void PlayButton::mouseReleaseEvent(QMouseEvent *e) {
+    QAbstractButton::mouseReleaseEvent(e);
+    animate(m_pressAnim, m_press, 0, 140);
+}
+void PlayButton::showEvent(QShowEvent *e) { QAbstractButton::showEvent(e); syncPulse(); }
+void PlayButton::hideEvent(QHideEvent *e) { QAbstractButton::hideEvent(e); m_pulseAnim->stop(); }
+void PlayButton::changeEvent(QEvent *e) {
+    QAbstractButton::changeEvent(e);
+    if (e->type() == QEvent::EnabledChange) update();
+}
+
+void PlayButton::paintEvent(QPaintEvent *) {
+    const auto &th = ThemeManager::instance();
+    const QColor top = th.color("accent-top", QColor("#6aa1ff")), bot = th.color("accent-bottom", QColor("#3568de"));
+    const bool en = isEnabled();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const QPointF c = QRectF(rect()).center();
+    const qreal base = qMin(width(), height()) / 2.0;
+    const qreal R = (base - 8) * (1.0 + 0.07 * m_hover - 0.06 * m_press);     // disk radius
+
+    if (en) {
+        QColor halo = top;                                                    // hover halo + the pulse while playing
+        halo.setAlphaF(0.20 * m_hover);
+        p.setPen(Qt::NoPen);
+        p.setBrush(halo);
+        p.drawEllipse(c, R + 6, R + 6);
+        if (m_playing) {
+            QColor pc = top;
+            pc.setAlphaF(0.42 * (1 - m_pulse));
+            p.setBrush(pc);
+            p.drawEllipse(c, R + 1 + 6 * m_pulse, R + 1 + 6 * m_pulse);
+        }
+    }
+    if (hasFocus()) {
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(top, 1.6));
+        p.drawEllipse(c, R + 5, R + 5);
+    }
+    if (m_progress >= 0 && en) {                                              // position ring
+        const QRectF ring(c.x() - R - 4, c.y() - R - 4, 2 * (R + 4), 2 * (R + 4));
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(255, 255, 255, 36), 2.4, Qt::SolidLine, Qt::RoundCap));
+        p.drawEllipse(ring);
+        p.setPen(QPen(top, 2.6, Qt::SolidLine, Qt::RoundCap));
+        p.drawArc(ring, 90 * 16, -int(m_progress * 360 * 16));
+    }
+
+    // disk
+    QLinearGradient g(c.x(), c.y() - R, c.x(), c.y() + R);
+    if (en) {
+        g.setColorAt(0, m_playing ? bot.lighter(112) : top);
+        g.setColorAt(1, m_playing ? bot.darker(115) : bot);
+    } else {
+        g.setColorAt(0, QColor(255, 255, 255, 26));
+        g.setColorAt(1, QColor(255, 255, 255, 12));
+    }
+    p.setBrush(g);
+    p.setPen(QPen(en ? top.lighter(125) : QColor(255, 255, 255, 36), 1));
+    p.drawEllipse(c, R, R);
+    if (en) {                                                                 // gloss on the upper half
+        QLinearGradient gl(c.x(), c.y() - R, c.x(), c.y());
+        gl.setColorAt(0, QColor(255, 255, 255, 90));
+        gl.setColorAt(1, QColor(255, 255, 255, 0));
+        QPainterPath cap;
+        cap.addEllipse(QRectF(c.x() - R + 2, c.y() - R + 1.5, 2 * R - 4, R));
+        p.setPen(Qt::NoPen);
+        p.setBrush(gl);
+        p.drawPath(cap);
+    }
+
+    // glyph: triangle <-> rounded square, cross-faded
+    const QColor ink = en ? QColor("#ffffff") : th.color("text-disabled", QColor("#5d6475"));
+    const qreal s = R * 0.46;
+    if (m_morph < 0.999) {
+        p.save();
+        p.setOpacity(1 - m_morph);
+        p.translate(c.x() + s * 0.12, c.y());
+        p.scale(1 - 0.25 * m_morph, 1 - 0.25 * m_morph);
+        QPainterPath tri;
+        tri.moveTo(-s * 0.78, -s * 1.0);
+        tri.lineTo(s * 1.0, 0);
+        tri.lineTo(-s * 0.78, s * 1.0);
+        tri.closeSubpath();
+        p.setBrush(ink);
+        p.setPen(QPen(ink, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.drawPath(tri);
+        p.restore();
+    }
+    if (m_morph > 0.001) {
+        p.save();
+        p.setOpacity(m_morph);
+        p.translate(c);
+        p.scale(0.75 + 0.25 * m_morph, 0.75 + 0.25 * m_morph);
+        p.setBrush(ink);
+        p.setPen(Qt::NoPen);
+        p.drawRoundedRect(QRectF(-s * 0.82, -s * 0.82, s * 1.64, s * 1.64), 2.6, 2.6);
+        p.restore();
     }
 }

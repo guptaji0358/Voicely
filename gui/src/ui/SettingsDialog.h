@@ -3,7 +3,7 @@
 // titled cards (Engine, Google API key, Appearance, Storage); everything is styled by the theme's QSS
 // (objectNames settingsNav, settingsHeader, settingsCard, ...). The dialog only collects values: the caller reads
 // them after exec() == Accepted and applies them.
-#include <QDialog>
+#include "DialogFrame.h"
 
 class PronSettings;
 class ProtocolClient;
@@ -14,7 +14,7 @@ class QListWidget;
 class QSpinBox;
 class QStackedWidget;
 
-class SettingsDialog : public QDialog {
+class SettingsDialog : public StyledDialog {
     Q_OBJECT
 public:
     SettingsDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, const QString &apiKey,
@@ -23,7 +23,6 @@ public:
     QString pythonExe() const;
     QString engineRoot() const;
     QString apiKey() const;
-    QString theme() const;
     bool reduceMotion() const;
     bool effects() const;
     bool sounds() const;
@@ -38,7 +37,6 @@ private:
     QListWidget *m_nav;
     QStackedWidget *m_pages;
     QLineEdit *m_py, *m_root, *m_key;
-    QComboBox *m_theme;
     QCheckBox *m_reduce, *m_fx, *m_snd, *m_native;
     QSpinBox *m_keep;
     PronSettings *m_pron;

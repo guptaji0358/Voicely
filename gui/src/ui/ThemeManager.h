@@ -16,9 +16,9 @@ class ThemeManager : public QObject {
     Q_OBJECT
 public:
     static ThemeManager &instance();
-    static QStringList availableThemes();            // {"dark", "light"}
+    static QStringList availableThemes();            // {"dark"}
 
-    void ensureApplied();                            // applies the saved theme (default "dark") once
+    void ensureApplied();                            // applies the theme once (there is only the dark theme)
     bool apply(const QString &theme);                // false => fallback style is in use, see lastError()
 
     QString current() const { return m_current; }

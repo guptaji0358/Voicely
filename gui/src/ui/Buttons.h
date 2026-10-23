@@ -2,6 +2,7 @@
 // Buttons with animated hover/press feedback. QSS cannot animate, so the base look comes from the
 // stylesheet and a translucent overlay (colours from the theme's @fx-hover / @fx-press tokens) is
 // faded in and out on top of it with QVariantAnimation.
+#include <QAbstractButton>
 #include <QEnterEvent>
 #include <QPainter>
 #include <QPushButton>
@@ -83,4 +84,35 @@ private:
     Mode m_mode = Mode::Idle;
     QVariantAnimation *m_phaseAnim;
     qreal m_phase = 0;
+};
+
+// Round play / stop button for lists of sounds (the voice library). Idle shows a glossy accent disk with a play
+// triangle; while playing the triangle morphs into a stop square, a halo pulses and a ring around the disk fills with
+// the playback position (setProgress). Hover grows the disk and lights a halo; keyboard focus draws a ring.
+class PlayButton : public QAbstractButton {
+    Q_OBJECT
+public:
+    explicit PlayButton(QWidget *parent = nullptr);
+    void setPlaying(bool on);
+    bool playing() const { return m_playing; }
+    void setProgress(qreal p);                   // 0..1; a negative value hides the ring
+    QSize sizeHint() const override { return {50, 50}; }
+    QSize minimumSizeHint() const override { return sizeHint(); }
+
+protected:
+    void paintEvent(QPaintEvent *) override;
+    void enterEvent(QEnterEvent *) override;
+    void leaveEvent(QEvent *) override;
+    void mousePressEvent(QMouseEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+    void showEvent(QShowEvent *) override;
+    void hideEvent(QHideEvent *) override;
+    void changeEvent(QEvent *) override;
+
+private:
+    void animate(QVariantAnimation *a, qreal from, qreal to, int ms);
+    void syncPulse();
+    bool m_playing = false;
+    qreal m_hover = 0, m_press = 0, m_morph = 0, m_pulse = 0, m_progress = -1;
+    QVariantAnimation *m_hoverAnim, *m_pressAnim, *m_morphAnim, *m_pulseAnim;
 };

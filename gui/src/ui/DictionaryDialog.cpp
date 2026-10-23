@@ -1,4 +1,5 @@
 #include "DictionaryDialog.h"
+#include "Controls.h"
 
 #include "Buttons.h"
 #include "Icons.h"
@@ -6,7 +7,6 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -40,11 +40,13 @@ QString regressionText(const QJsonObject &gate) {
 }  // namespace
 
 // --------------------------------------------------------------------------------------------- EntryEditor
-EntryEditor::EntryEditor(const QJsonObject &init, bool ipaSupported, bool repairMode, QWidget *parent) : QDialog(parent) {
+EntryEditor::EntryEditor(const QJsonObject &init, bool ipaSupported, bool repairMode, QWidget *parent) : StyledDialog(parent, "dictionary", false) {
     setWindowTitle(init.contains("id") ? "Edit pronunciation" : "Add pronunciation");
     setObjectName("entryEditor");
     setMinimumWidth(460);
     auto *f = new QFormLayout(this);
+    f->setContentsMargins(14, 4, 14, 10);
+    f->setVerticalSpacing(10);
     m_written = new QLineEdit(init.value("written").toString());
     m_written->setObjectName("entryWritten");
     m_hint = new QLineEdit(init.value("hint").toString());
@@ -63,7 +65,7 @@ EntryEditor::EntryEditor(const QJsonObject &init, bool ipaSupported, bool repair
     m_category = new QComboBox;
     for (auto *c : kCats) m_category->addItem(c);
     m_category->setCurrentText(init.value("category").toString("name"));
-    m_case = new QCheckBox("Match exact capitalisation");
+    m_case = new FancyCheckBox("Match exact capitalisation");
     m_case->setChecked(init.value("case_sensitive").toBool());
     m_before = new QLineEdit(words(init.value("context_before")));
     m_before->setPlaceholderText("only when preceded by one of these words (optional)");
@@ -86,21 +88,28 @@ EntryEditor::EntryEditor(const QJsonObject &init, bool ipaSupported, bool repair
     f->addRow("Only when preceded by", m_before);
     f->addRow("Only when followed by", m_after);
     f->addRow("Note", m_note);
-    m_save = new QCheckBox("Also save in the pronunciation dictionary (otherwise use for this repair only)");
+    m_save = new FancyCheckBox("Also save in the pronunciation dictionary (otherwise use for this repair only)");
     m_save->setChecked(true);
     m_save->setVisible(repairMode);
     f->addRow("", m_save);
-    auto *bb = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    f->addRow(bb);
-    connect(bb, &QDialogButtonBox::accepted, this, [this] {
+    auto *btnRow = new QHBoxLayout;
+    btnRow->addStretch(1);
+    auto *cancelBtn = new AnimatedButton("Cancel");
+    auto *okBtn = new AnimatedButton("Save");
+    okBtn->setObjectName("primary");
+    okBtn->setDefault(true);
+    btnRow->addWidget(cancelBtn);
+    btnRow->addWidget(okBtn);
+    f->addRow(btnRow);
+    connect(okBtn, &QPushButton::clicked, this, [this] {
         if (m_written->text().trimmed().isEmpty() ||
             (m_hint->text().trimmed().isEmpty() && m_ipa->text().trimmed().isEmpty() && m_correction->text().trimmed().isEmpty())) {
-            QMessageBox::warning(this, "Pronunciation", "Enter the written form and at least a respelling, IPA or replacement.");
+            Msg::warning(this, "Pronunciation", "Enter the written form and at least a respelling, IPA or replacement.");
             return;
         }
         accept();
     });
-    connect(bb, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(cancelBtn, &QPushButton::clicked, this, &QDialog::reject);
 }
 
 bool EntryEditor::saveToDictionary() const { return m_save->isVisibleTo(const_cast<EntryEditor *>(this)) ? m_save->isChecked() : true; }
@@ -115,11 +124,13 @@ QJsonObject EntryEditor::entry() const {
 
 // ------------------------------------------------------------------------------------------ DictionaryDialog
 DictionaryDialog::DictionaryDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, QWidget *parent)
-    : QDialog(parent), m_client(client), m_backend(backend), m_ipa(ipaSupported) {
+    : StyledDialog(parent, "dictionary"), m_client(client), m_backend(backend), m_ipa(ipaSupported) {
     setWindowTitle("Pronunciation dictionary");
     setObjectName("dictionaryDialog");
     resize(760, 460);
     auto *v = new QVBoxLayout(this);
+    v->setContentsMargins(14, 4, 14, 10);
+    v->setSpacing(10);
     auto *top = new QHBoxLayout;
     m_search = new QLineEdit;
     m_search->setObjectName("dictSearch");
@@ -203,12 +214,12 @@ void DictionaryDialog::addEntry(ProtocolClient *client, QWidget *ctx, const QJso
         client->call("dictionary", {{"op", "add"}, {"entry", entry}, {"backend", backend}, {"check_regression", check}}, ctx,
                      [=](const QString &st, const QJsonObject &r) {
             if (st != "success") {
-                QMessageBox::warning(ctx, "Pronunciation dictionary", r.value("message").toString());
+                Msg::warning(ctx, "Pronunciation dictionary", r.value("message").toString());
                 done(false, r);
                 return;
             }
             if (!r.value("added").toBool()) {
-                const auto a = QMessageBox::question(ctx, "This change breaks approved corrections",
+                const auto a = Msg::question(ctx, "This change breaks approved corrections",
                     "Adding this entry would regress corrections you approved earlier:\n\n" +
                     regressionText(r.value("regression").toObject()) + "\n\nAdd it anyway?");
                 if (a == QMessageBox::Yes) (*send)(false);
@@ -241,9 +252,9 @@ void DictionaryDialog::editRow(bool add) {
         m_client->call("dictionary", {{"op", "update"}, {"id", id}, {"entry", e}, {"backend", m_backend}, {"check_regression", check}},
                        this, [=](const QString &st, const QJsonObject &r) {
             if (st != "success") {
-                QMessageBox::warning(this, "Pronunciation dictionary", r.value("message").toString());
+                Msg::warning(this, "Pronunciation dictionary", r.value("message").toString());
             } else if (!r.value("updated").toBool()) {
-                if (QMessageBox::question(this, "This change breaks approved corrections",
+                if (Msg::question(this, "This change breaks approved corrections",
                         regressionText(r.value("regression").toObject()) + "\n\nSave it anyway?") == QMessageBox::Yes)
                     (*send)(false);
             }
@@ -257,14 +268,14 @@ void DictionaryDialog::deleteRow() {
     auto *it = m_table->item(m_table->currentRow(), 0);
     if (!it) return;
     const QJsonObject e = it->data(Qt::UserRole).toJsonObject();
-    if (QMessageBox::question(this, "Delete", QString("Delete the entry for “%1”?").arg(e.value("written").toString())) != QMessageBox::Yes)
+    if (Msg::question(this, "Delete", QString("Delete the entry for “%1”?").arg(e.value("written").toString())) != QMessageBox::Yes)
         return;
     auto send = std::make_shared<std::function<void(bool)>>();
     *send = [=](bool force) {
         m_client->call("dictionary", {{"op", "delete"}, {"id", e.value("id")}, {"force", force}}, this,
                        [=](const QString &st, const QJsonObject &r) {
             if (st == "success" && !r.value("deleted").toBool()) {
-                if (QMessageBox::question(this, "This removes an approved correction",
+                if (Msg::question(this, "This removes an approved correction",
                         regressionText(r.value("regression").toObject()) + "\n\nDelete it anyway?") == QMessageBox::Yes)
                     (*send)(true);
             }
@@ -280,8 +291,8 @@ void DictionaryDialog::importFile() {
     const QString fmt = f.endsWith(".csv", Qt::CaseInsensitive) ? "csv" : "json";
     m_client->call("dictionary", {{"op", "import"}, {"path", f}, {"format", fmt}, {"backend", m_backend}}, this,
                    [this](const QString &st, const QJsonObject &r) {
-        if (st != "success") QMessageBox::warning(this, "Import failed", r.value("message").toString() + "\n\nNothing was imported.");
-        else QMessageBox::information(this, "Import", QString("Added %1, updated %2, skipped %3 existing.")
+        if (st != "success") Msg::warning(this, "Import failed", r.value("message").toString() + "\n\nNothing was imported.");
+        else Msg::information(this, "Import", QString("Added %1, updated %2, skipped %3 existing.")
                                                           .arg(r.value("added").toInt()).arg(r.value("updated").toInt()).arg(r.value("skipped").toInt()));
         reload();
     });
@@ -294,6 +305,6 @@ void DictionaryDialog::exportFile() {
     if (f.isEmpty()) return;
     const QString fmt = f.endsWith(".csv", Qt::CaseInsensitive) ? "csv" : "json";
     m_client->call("dictionary", {{"op", "export"}, {"path", f}, {"format", fmt}}, this, [this](const QString &st, const QJsonObject &r) {
-        if (st != "success") QMessageBox::warning(this, "Export failed", r.value("message").toString());
+        if (st != "success") Msg::warning(this, "Export failed", r.value("message").toString());
     });
 }

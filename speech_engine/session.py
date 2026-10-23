@@ -129,7 +129,7 @@ class Session:
         spans = locate_chunks(text, [c.text for c in chunks])
         s.m = {"schema": SCHEMA, "session_id": uuid.uuid4().hex[:12], "created": time.time(),
                "original_text": text, "language": language, "backend": backend.name, "voice": profile.name,
-               "speed": params.speed, "style": params.style,
+               "speed": params.speed, "style": params.style, "stretch": params.stretch,
                "emotion": emotion[0], "emotion_intensity": emotion[1], "dictionary_version": dictionary.version if dictionary else 0,
                "versions": versions or {}, "sample_rate": None, "chunks": [],
                "selection": {"accepted": {}, "candidate": None}}
@@ -153,7 +153,7 @@ class Session:
                        cancel: threading.Event, extra_overrides: list[tuple[str, str]] | None = None) -> dict:
         spoken = PronDictionary.apply(chunk_text, apps)
         overrides = [(a.original, a.ipa) for a in apps if a.mode == "ipa" and a.ipa] + list(extra_overrides or [])
-        p = SynthParams(speed=params.speed, style=params.style, timeout=params.timeout,
+        p = SynthParams(speed=params.speed, style=params.style, timeout=params.timeout, stretch=params.stretch,
                         overrides=tuple(overrides) if backend.supports_ipa else ())
         audio = crossfade_edges(backend.synthesize(spoken, profile, p, cancel))
         rate = self.m.get("sample_rate")

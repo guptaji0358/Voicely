@@ -5,7 +5,7 @@
 //
 // Learning from your speech is opt-in: when switched on, the text of speech you generate is remembered on this computer and
 // labelled by Recheck Speech; "Train from my speech" turns those rechecked segments into a training run.
-#include <QDialog>
+#include "DialogFrame.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QProcessEnvironment>
@@ -45,7 +45,7 @@ private:
     QVector<QPointF> m_train, m_val;
 };
 
-class ModelLabDialog : public QDialog {
+class ModelLabDialog : public StyledDialog {
     Q_OBJECT
 public:
     // `env` is passed to the worker (tests use it to point MODEL_LAB_DIR / SPEECH_ENGINE_DATA_DIR at temporary folders).

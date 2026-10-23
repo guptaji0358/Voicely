@@ -1,7 +1,7 @@
 #pragma once
 // Voice library: every voice as a card in a searchable grid (All / Girls / Boys), each with its own play button for the
 // stored audio sample. Choosing a voice just reports its name; MainWindow's voice combo stays the source of truth.
-#include <QDialog>
+#include "DialogFrame.h"
 #include <QList>
 #include <QString>
 
@@ -10,6 +10,7 @@ class QGridLayout;
 class QLabel;
 class QLineEdit;
 class QMediaPlayer;
+class PlayButton;
 class QPushButton;
 class QWidget;
 
@@ -17,7 +18,7 @@ struct VoiceEntry {
     QString name, display, gender, tagline, sample;   // gender: "female" | "male" | ""
 };
 
-class VoiceLibraryDialog : public QDialog {
+class VoiceLibraryDialog : public StyledDialog {
     Q_OBJECT
 public:
     VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QString &current, QWidget *parent = nullptr);
@@ -28,12 +29,13 @@ private:
     struct Card {
         VoiceEntry v;
         QWidget *w = nullptr;
-        QPushButton *play = nullptr;
+        PlayButton *play = nullptr;
     };
     void relayout();
     void select(const QString &name);
     void togglePlay(const QString &name);
     void stopPlayback();
+    void showProgress(qint64 pos, qint64 duration);
 
     QList<VoiceEntry> m_voices;
     QList<Card> m_cards;

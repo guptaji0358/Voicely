@@ -1,6 +1,10 @@
 #include "VoiceLibraryDialog.h"
+#include "Buttons.h"
+#include "Controls.h"
 
+#include <QAudioDevice>
 #include <QAudioOutput>
+#include <QMediaDevices>
 #include <QButtonGroup>
 #include <QColor>
 #include <QStyle>
@@ -45,34 +49,37 @@ QString avatarStyle(const QString &name, bool female) {
     const QColor a = QColor::fromHsv(hue, 150, 255), b = QColor::fromHsv((hue + 50) % 360, 220, 170);
     Q_UNUSED(female)
     return QString("background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 %1,stop:1 %2);color:white;"
-                   "border-radius:22px;font-weight:bold;font-size:15px;")
+                   "border-radius:24px;border:2px solid rgba(255,255,255,0.28);font-weight:bold;font-size:16px;")
         .arg(a.name(), b.name());
 }
 }  // namespace
 
 VoiceLibraryDialog::VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QString &current, QWidget *parent)
-    : QDialog(parent), m_voices(voices), m_selected(current) {
+    : StyledDialog(parent, "voice"), m_voices(voices), m_selected(current) {
     setObjectName("voiceLibrary");
     setWindowTitle(tr("Voice library"));
     resize(860, 680);
-    setStyleSheet(
-        "QFrame#voiceCard{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.14);border-radius:12px;}"
-        "QFrame#voiceCard:hover{background:rgba(255,255,255,0.09);border-color:rgba(255,255,255,0.3);}"
-        "QFrame#voiceCard[selected=\"true\"]{border:2px solid #3d7eff;background:rgba(61,126,255,0.16);}"
-        "QPushButton[chip=\"true\"]{border-radius:14px;padding:5px 16px;border:1px solid rgba(255,255,255,0.25);}"
-        "QPushButton[chip=\"true\"]:checked{background:#3d7eff;color:white;border-color:#3d7eff;}");
-
     m_player = new QMediaPlayer(this);
     m_out = new QAudioOutput(this);
     m_player->setAudioOutput(m_out);
+    connect(m_player, &QMediaPlayer::errorOccurred, this, [this](QMediaPlayer::Error, const QString &msg) {
+        m_count->setText(tr("Playback error: %1").arg(msg));
+        stopPlayback();
+    });
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState st) {
         if (st == QMediaPlayer::StoppedState) {
             m_playing.clear();
-            for (auto &c : m_cards) c.play->setText(tr("▶  Play"));
+            for (auto &c : m_cards) {
+                c.play->setPlaying(false);
+                c.play->setProgress(-1);
+            }
         }
     });
+    connect(m_player, &QMediaPlayer::positionChanged, this, [this](qint64 pos) { showProgress(pos, m_player->duration()); });
+    connect(m_player, &QMediaPlayer::durationChanged, this, [this](qint64 d) { showProgress(m_player->position(), d); });
 
     auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(14, 4, 14, 10);
     root->setSpacing(10);
 
     auto *top = new QHBoxLayout;
@@ -84,11 +91,13 @@ VoiceLibraryDialog::VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QS
     const struct { const char *label; const char *key; } filters[] = {
         {"All", ""}, {"Girls", "female"}, {"Boys", "male"}};
     for (const auto &f : filters) {
-        auto *b = new QPushButton(tr(f.label));
+        auto *b = new AnimatedButton(tr(f.label));
         b->setCheckable(true);
         b->setChecked(!*f.key);
         b->setProperty("chip", true);
-        b->setCursor(Qt::PointingHandCursor);
+        b->setProperty("variant", "ghost");
+        b->setProperty("fxRadius", 15);
+        b->setCursor(Cursors::pointer());
         grp->addButton(b);
         top->addWidget(b);
         connect(b, &QPushButton::clicked, this, [this, key = QString(f.key)] {
@@ -112,7 +121,7 @@ VoiceLibraryDialog::VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QS
     for (int c = 0; c < kColumns; ++c) m_grid->setColumnStretch(c, 1);
     for (QLabel *&hd : m_headers) {
         hd = new QLabel(host);
-        hd->setStyleSheet("font-size:12px;font-weight:700;letter-spacing:1px;padding:10px 2px 2px 2px;");
+        hd->setObjectName("voiceSection");
         hd->hide();
     }
     scroll->setWidget(host);
@@ -125,8 +134,8 @@ VoiceLibraryDialog::VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QS
 
     auto *bottom = new QHBoxLayout;
     bottom->addStretch(1);
-    auto *cancel = new QPushButton(tr("Cancel"));
-    m_use = new QPushButton(tr("Use this voice"));
+    auto *cancel = new AnimatedButton(tr("Cancel"));
+    m_use = new AnimatedButton(tr("Use this voice"));
     m_use->setObjectName("primary");
     m_use->setDefault(true);
     bottom->addWidget(cancel);
@@ -142,30 +151,28 @@ VoiceLibraryDialog::VoiceLibraryDialog(const QList<VoiceEntry> &voices, const QS
         c.v = v;
         auto *f = new CardFrame;
         f->setObjectName("voiceCard");
-        f->setCursor(Qt::PointingHandCursor);
+        f->setCursor(Cursors::pointer());
         f->onClick = [this, n = v.name] { select(n); };
         f->onDouble = [this, n = v.name] { select(n); accept(); };
         auto *h = new QHBoxLayout(f);
         h->setContentsMargins(14, 12, 14, 12);
-        h->setSpacing(12);
+        h->setSpacing(14);
         auto *av = new QLabel(v.display.left(1).toUpper());
-        av->setFixedSize(44, 44);
+        av->setFixedSize(48, 48);
         av->setAlignment(Qt::AlignCenter);
         av->setStyleSheet(avatarStyle(v.name, v.gender == "female"));
         h->addWidget(av, 0, Qt::AlignVCenter);
         auto *col = new QVBoxLayout;
         col->setSpacing(3);
         auto *name = new QLabel(v.display);
-        name->setStyleSheet("font-size:15px;font-weight:600;");
+        name->setObjectName("voiceName");
         auto *tag = new QLabel(v.tagline);
         tag->setWordWrap(true);
         tag->setObjectName("muted");
         col->addWidget(name);
         col->addWidget(tag);
         h->addLayout(col, 1);
-        c.play = new QPushButton(tr("▶  Play"));
-        c.play->setMinimumWidth(92);
-        c.play->setCursor(Qt::PointingHandCursor);
+        c.play = new PlayButton;
         c.play->setEnabled(!v.sample.isEmpty() && QFile::exists(v.sample));
         c.play->setToolTip(c.play->isEnabled() ? tr("Hear this voice (stored sample - no API credit used)")
                                                : tr("No stored sample for this voice"));
@@ -183,16 +190,19 @@ void VoiceLibraryDialog::relayout() {
     const QString q = m_search->text().trimmed();
     struct Sec { const char *title; int kind; };            // kind: 0 classic, 1 girls, 2 boys
     int shown = 0, row = 0;
+    QList<int> kinds;                                       // per card: 0 classic, 1 girls, 2 boys; -1 = filtered out
+    for (auto &c : m_cards) {
+        const int kind = isClassic(c.v.name) ? 0 : c.v.gender == "female" ? 1 : 2;
+        const bool ok = (m_filter.isEmpty() || (kind != 0 && c.v.gender == m_filter)) &&
+                        (q.isEmpty() || c.v.display.contains(q, Qt::CaseInsensitive) ||
+                         c.v.tagline.contains(q, Qt::CaseInsensitive) || c.v.name.contains(q, Qt::CaseInsensitive));
+        c.w->setVisible(ok);                                // once per card - not once per section
+        kinds << (ok ? kind : -1);
+    }
     for (const Sec &sec : {Sec{"CLASSIC VOICES", 0}, Sec{"GIRLS", 1}, Sec{"BOYS", 2}}) {
         QList<Card *> in;
-        for (auto &c : m_cards) {
-            const int kind = isClassic(c.v.name) ? 0 : c.v.gender == "female" ? 1 : 2;
-            const bool ok = kind == sec.kind && (m_filter.isEmpty() || (kind != 0 && c.v.gender == m_filter)) &&
-                            (q.isEmpty() || c.v.display.contains(q, Qt::CaseInsensitive) ||
-                             c.v.tagline.contains(q, Qt::CaseInsensitive) || c.v.name.contains(q, Qt::CaseInsensitive));
-            c.w->setVisible(ok);
-            if (ok) in << &c;
-        }
+        for (int i = 0; i < m_cards.size(); ++i)
+            if (kinds[i] == sec.kind) in << &m_cards[i];
         QLabel *hd = m_headers[sec.kind];
         hd->setVisible(!in.isEmpty());
         if (in.isEmpty()) continue;
@@ -223,10 +233,13 @@ void VoiceLibraryDialog::togglePlay(const QString &name) {
     if (same) return;
     for (auto &c : m_cards) {
         if (c.v.name != name) continue;
+        const QAudioDevice dev = QMediaDevices::defaultAudioOutput();     // follow headphone / device switches
+        if (!dev.isNull() && m_out->device() != dev) m_out->setDevice(dev);
         m_player->setSource(QUrl::fromLocalFile(c.v.sample));
         m_player->play();
         m_playing = name;
-        c.play->setText(tr("■  Stop"));
+        c.play->setPlaying(true);
+        c.play->setProgress(0);
         select(name);
     }
 }
@@ -234,5 +247,14 @@ void VoiceLibraryDialog::togglePlay(const QString &name) {
 void VoiceLibraryDialog::stopPlayback() {
     if (m_player->playbackState() != QMediaPlayer::StoppedState) m_player->stop();
     m_playing.clear();
-    for (auto &c : m_cards) c.play->setText(tr("▶  Play"));
+    for (auto &c : m_cards) {
+        c.play->setPlaying(false);
+        c.play->setProgress(-1);
+    }
+}
+
+void VoiceLibraryDialog::showProgress(qint64 pos, qint64 duration) {
+    if (m_playing.isEmpty() || duration <= 0) return;
+    for (auto &c : m_cards)
+        if (c.v.name == m_playing) c.play->setProgress(qreal(pos) / duration);
 }

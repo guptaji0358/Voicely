@@ -162,7 +162,8 @@ class QA:
         if mode not in ("review", "auto"):
             raise InvalidInputError("mode must be 'review' or 'auto'")
         max_attempts = max(1, min(int(max_attempts), 5))
-        params = SynthParams(speed=s.m.get("speed"), style=s.m.get("style"))
+        params = SynthParams(speed=s.m.get("speed"), style=s.m.get("style"),
+                             stretch=s.m.get("stretch", 1.0))
         doc = self.load_results(s)
         if chunk_ids is None:                          # every chunk whose current result needs attention
             chunk_ids = [int(i) for i, r in doc["results"].items() if r["status"] in ("needs_review", "failed")]

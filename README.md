@@ -133,7 +133,7 @@ Google backend untested (no API key here; only its "unavailable" error path is t
 Qt 6 Widgets app (C++) talking to the Python worker over the JSON-lines protocol (`docs/PROTOCOL.md`, versions 1 and 2).
 
 ```
-gui/assets/styles/    dark.qss, light.qss (colour tokens) + components.qss (rules, layout tokens)
+gui/assets/styles/    dark.qss (colour tokens) + components.qss (rules, layout tokens)
 gui/assets/icons/     24x24 stroke SVGs (currentColor, recoloured per theme at paint time)
 gui/assets/illustrations/  empty-state SVGs
 gui/resources/resources.qrc  -> :/styles/*, :/icons/*, :/illustrations/*
@@ -156,6 +156,11 @@ Custom title bar (`Qt::FramelessWindowHint`; moving/resizing/snapping are done b
 with painted layered shadows over a subtle perspective backdrop, staggered entrance fades, animated hover/press, waveform from real decoded
 samples. It is a genuine native widget app; depth is created with layered 2D painting (no 3D engine). Fallback: Settings > "Use the standard Windows
 title bar" or `TTS_NATIVE_FRAME=1`. Reduced motion: Settings or `TTS_REDUCE_MOTION=1` (also follows the Windows animation setting).
+Import / Paste / Clear / Check-pronunciation, Settings, the side-panel toggle and the command menu are icon buttons in the title bar (tooltips
+name them). Every dialog (Settings, Voice library, Dictionary, Review, Model Lab, message boxes) uses the same frameless, shadowed window with
+the same backdrop and its own title bar (`ui/DialogFrame.*`); menus are drawn by `ui/Menus.h`. There is only the dark theme.
+Shortcuts: Alt+Enter (also Ctrl+Enter) generate speech, Space play / pause, Q stop (typing in a text field keeps the key), Ctrl+O import, Ctrl+S save MP3,
+Ctrl+R recheck, Ctrl+Shift+P check pronunciation, Ctrl+D dictionary, Ctrl+M Model Lab, Ctrl+B side panel, Ctrl+, settings.
 Not done: Windows 11 Snap Layouts flyout on the maximize button (needs `WM_NCHITTEST` handling) and Alt+Space system menu.
 
 ### Build / run / test (Windows, MinGW Qt 6.11; needs Qt Widgets, Multimedia, Svg, Test)
