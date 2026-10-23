@@ -6,7 +6,9 @@
 #include "ui/Frameless.h"
 #include "ui/Icons.h"
 #include "ui/Indicators.h"
+#include "ui/SettingsDialog.h"
 #include "ui/ThemeManager.h"
+#include "ProtocolClient.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -14,6 +16,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMediaPlayer>
@@ -355,6 +358,27 @@ private slots:
         QVERIFY(!light.isNull());
         QVERIFY(ThemeManager::instance().apply("dark"));
         QVERIFY(w->grab().toImage() != light);
+    }
+    void settingsDialogIsStyled() {
+        ProtocolClient client;
+        for (const char *theme : {"dark", "light"}) {
+            QVERIFY(ThemeManager::instance().apply(theme));
+            SettingsDialog d(&client, "mock", false, "secret-key");
+            d.show();
+            QCOMPARE(d.apiKey(), QString("secret-key"));
+            auto *nav = d.findChild<QListWidget *>("settingsNav");
+            QVERIFY(nav && nav->count() == 2);
+            QVERIFY2(!d.findChildren<QFrame *>("settingsCard").isEmpty(), "General is built from titled cards");
+            QVERIFY2(d.findChild<QPushButton *>("primary"), "Save is the primary button");
+            const QString dir = qEnvironmentVariable("TTS_SHOT_DIR");
+            if (!dir.isEmpty()) {                                   // optional: leave screenshots for a visual check
+                d.grab().save(QDir(dir).filePath(QString("settings-%1-general.png").arg(theme)));
+                nav->setCurrentRow(1);
+                QTest::qWait(150);
+                d.grab().save(QDir(dir).filePath(QString("settings-%1-pron.png").arg(theme)));
+            }
+        }
+        QVERIFY(ThemeManager::instance().apply("dark"));
     }
     void stateIconSpinsOnlyWhenBusyAndVisible() {
         StateIcon s;

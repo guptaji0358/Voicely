@@ -17,6 +17,7 @@
 #include "ui/Motion.h"
 #include "ui/PronSettings.h"
 #include "ui/QaPanel.h"
+#include "ui/SettingsDialog.h"
 #include "ui/ReviewDialog.h"
 #include "ui/ModelLabDialog.h"
 #include "ui/ThemeManager.h"
@@ -1869,107 +1870,28 @@ void MainWindow::updateCounts() {
 }
 
 void MainWindow::openSettings() {
-    QDialog d(this);
-    d.setWindowTitle("Settings");
-    d.setMinimumWidth(620);
-    auto *outer = new QVBoxLayout(&d);
-    auto *tabs = new QTabWidget;
-    outer->addWidget(tabs);
-    auto *general = new QWidget;
-    auto *form = new QFormLayout(general);
-    auto *py = new QLineEdit(Config::settings().value("pythonExe").toString());
-    py->setPlaceholderText("auto: " + Config::findPython());
-    auto *root = new QLineEdit(Config::settings().value("engineRoot").toString());
-    root->setPlaceholderText("auto: " + Config::findEngineRoot());
-    auto *key = new QLineEdit(m_sessionApiKey);
-    key->setEchoMode(QLineEdit::Password);
-    key->setPlaceholderText("Paste key from aistudio.google.com/apikey (or leave empty to use GEMINI_API_KEY)");
-    auto *theme = new QComboBox;
-    theme->addItems(ThemeManager::availableThemes());
-    theme->setCurrentText(ThemeManager::instance().current());
-    auto *reduce = new QCheckBox("Reduce motion (also follows the Windows animation setting)");
-    reduce->setChecked(Config::settings().value("reduceMotion", false).toBool());
-    auto *fx = new QCheckBox("3D visual effects (OpenGL background, orb and waveform)");
-    fx->setChecked(Config::settings().value("effects", true).toBool());
-    auto *snd = new QCheckBox("UI sound effects (clicks, drop, success)");
-    snd->setChecked(UiSounds::instance().enabled());
-    auto *keep = new QSpinBox;
-    keep->setRange(1, 60);
-    keep->setSuffix(" days");
-    keep->setValue(Config::settings().value("tempKeepDays", 3).toInt());
-    keep->setToolTip("Audio dragged out of the title bar is a temporary file; files older than this are deleted automatically.");
-    auto *native = new QCheckBox("Use the standard Windows title bar (takes effect after restart)");
-    native->setChecked(Config::settings().value("nativeFrame", false).toBool());
-    auto browse = [&](QLineEdit *e, bool dir) {
-        auto *b = new AnimatedButton("Browse…");
-        connect(b, &QPushButton::clicked, &d, [=, &d] {
-            const QString p = dir ? QFileDialog::getExistingDirectory(&d, "Engine folder (contains speech_engine/)")
-                                  : QFileDialog::getOpenFileName(&d, "Python interpreter", {}, "python.exe (python*.exe);;All files (*)");
-            if (!p.isEmpty()) e->setText(p);
-        });
-        auto *row = new QHBoxLayout;
-        row->addWidget(e, 1);
-        row->addWidget(b);
-        return row;
-    };
-    form->addRow("Python interpreter", browse(py, false));
-    form->addRow("Engine folder", browse(root, true));
-    form->addRow("Google API key (remembered)", key);
-    form->addRow("Theme", theme);
-    form->addRow("", reduce);
-    form->addRow("", fx);
-    form->addRow("", snd);
-    form->addRow("Delete temp audio after", keep);
-    form->addRow("", native);
-    auto *note = new QLabel(
-        "<b>How to get and add a Google (Gemini) API key</b>"
-        "<ol style='margin-top:2px; margin-bottom:2px'>"
-        "<li>Open <a href='https://aistudio.google.com/apikey'>aistudio.google.com/apikey</a> and sign in with a Google account.</li>"
-        "<li>Click <i>Create API key</i> (pick or create a Google Cloud project) and copy the key.</li>"
-        "<li>Paste it into the field above and click Save. Voicely remembers it, so you only do this once.</li>"
-        "<li>Alternatively set <code>GEMINI_API_KEY</code> (or <code>GOOGLE_API_KEY</code>) as a Windows environment variable.</li>"
-        "</ol>"
-        "Docs: <a href='https://ai.google.dev/gemini-api/docs/api-key'>ai.google.dev/gemini-api/docs/api-key</a> &middot; "
-        "Pricing and limits: <a href='https://ai.google.dev/gemini-api/docs/pricing'>ai.google.dev/gemini-api/docs/pricing</a>"
-        "<br><br>The key is stored encrypted with Windows (readable only by your Windows account) and passed to the "
-        "worker. Voice previews use stored samples and never spend API credit. Saving restarts the worker.");
-    note->setTextFormat(Qt::RichText);
-    note->setOpenExternalLinks(true);
-    note->setTextInteractionFlags(Qt::TextBrowserInteraction);
-    note->setWordWrap(true);
-    note->setObjectName("muted");
-    form->addRow(note);
-    tabs->addTab(general, "General");
-    auto *scroll = new QScrollArea;
-    scroll->setWidgetResizable(true);
-    auto *pron = new PronSettings(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa());
-    scroll->setWidget(pron);
-    tabs->addTab(scroll, "Pronunciation");
-    connect(pron, &PronSettings::changed, this, [this] {
+    SettingsDialog d(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa(),
+                     m_sessionApiKey, this);
+    connect(&d, &SettingsDialog::pronunciationChanged, this, [this] {
         m_client->call("health", {}, this, [this](const QString &st, const QJsonObject &r) {
             if (st == "success") { m_health = r; applyHealth(r); }
         }, 90000);
     });
-    auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel);
-    outer->addWidget(bb);
-    connect(bb, &QDialogButtonBox::accepted, &d, &QDialog::accept);
-    connect(bb, &QDialogButtonBox::rejected, &d, &QDialog::reject);
-    d.resize(680, 620);
     if (d.exec() != QDialog::Accepted) return;
-    Config::settings().setValue("pythonExe", py->text().trimmed());
-    Config::settings().setValue("engineRoot", root->text().trimmed());
-    Config::settings().setValue("reduceMotion", reduce->isChecked());
-    Config::settings().setValue("nativeFrame", native->isChecked());
-    Config::settings().setValue("effects", fx->isChecked());
-    Config::settings().setValue("tempKeepDays", keep->value());
-    UiSounds::instance().setEnabled(snd->isChecked());
+    Config::settings().setValue("pythonExe", d.pythonExe());
+    Config::settings().setValue("engineRoot", d.engineRoot());
+    Config::settings().setValue("reduceMotion", d.reduceMotion());
+    Config::settings().setValue("nativeFrame", d.nativeFrame());
+    Config::settings().setValue("effects", d.effects());
+    Config::settings().setValue("tempKeepDays", d.tempKeepDays());
+    UiSounds::instance().setEnabled(d.sounds());
     applyEffects();
-    Config::settings().setValue("theme", theme->currentText());
-    if (theme->currentText() != ThemeManager::instance().current()) {
-        ThemeManager::instance().apply(theme->currentText());
+    Config::settings().setValue("theme", d.theme());
+    if (d.theme() != ThemeManager::instance().current()) {
+        ThemeManager::instance().apply(d.theme());
         if (ThemeManager::instance().usingFallback()) setStatus(ThemeManager::instance().lastError(), true);
     }
-    m_sessionApiKey = key->text().trimmed();
+    m_sessionApiKey = d.apiKey();
     SecretStore::saveApiKey(m_sessionApiKey);
     if (m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking || m_state == State::Repairing)
         cancelJob();

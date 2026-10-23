@@ -41,6 +41,8 @@ class VoiceProfile:
     local_lang: str = "en-us"
     speed: float = 1.0
     pitch_semitones: float = 0.0   # local only: raises pitch, tempo preserved (resampling; approximate)
+    tilt_db: float = 0.0           # local only: spectral tilt, + brighter / - warmer (shelf EQ around 1.5 kHz)
+    style_push: float = 0.0        # local only: exaggerate what makes the blend differ from the average voice of its sex
     sentence_pause: float = 0.30   # seconds, applied by Kokoro inside a chunk
     clause_pause: float = 0.12
     # --- google (Gemini TTS) controls ---
@@ -58,8 +60,12 @@ class VoiceProfile:
         if self.local_blend:
             if any(w <= 0 for w in self.local_blend.values()):
                 raise InvalidInputError("blend weights must be positive")
-        if not -4.0 <= self.pitch_semitones <= 8.0:
-            raise InvalidInputError("pitch_semitones must be between -4 and 8")
+        if not -6.0 <= self.pitch_semitones <= 8.0:
+            raise InvalidInputError("pitch_semitones must be between -6 and 8")
+        if not -9.0 <= self.tilt_db <= 9.0:
+            raise InvalidInputError("tilt_db must be between -9 and 9")
+        if not -0.5 <= self.style_push <= 1.0:
+            raise InvalidInputError("style_push must be between -0.5 and 1.0")
         if self.paragraph_pause_ms < 0 or self.sentence_pause_ms < 0:
             raise InvalidInputError("pauses must be >= 0")
 
@@ -120,10 +126,10 @@ BOY = VoiceProfile(
 )
 
 def _extra(name, description, blend, google_voice, google_style, *, lang="en-us",
-           speed=1.0, pitch=0.0) -> VoiceProfile:
+           speed=1.0, pitch=0.0, tilt=0.0, push=0.0) -> VoiceProfile:
     return VoiceProfile(name=name, description=description, local_blend=blend, local_lang=lang,
-                        speed=speed, pitch_semitones=pitch, google_voice=google_voice,
-                        google_style=google_style)
+                        speed=speed, pitch_semitones=pitch, tilt_db=tilt, style_push=push,
+                        google_voice=google_voice, google_style=google_style)
 
 
 # 10 girl + 10 boy voices. Like ``original`` these are blends of stock Kokoro voices
@@ -225,6 +231,64 @@ BOYS_MORE = (
            "Speak slowly like a wise, deep-voiced elder.", speed=0.9),
 )
 
+# Per-voice timbre so no two sound alike even where they share a Kokoro base voice:
+# name -> (pitch semitones, tilt dB, style push, speed). Pitch moves the voice "size", tilt moves bright/warm,
+# push exaggerates the blend's individuality. Tuned with packaging/voice_distinctness.py.
+_TIMBRE = {
+    "girl_heart": (-3.5, -5.5, 0.35, 1.0),
+    "girl_kore": (-3.1, 3.5, 0.35, 0.98),
+    "girl_luna": (-2.6, -2.0, 0.35, 0.92),
+    "girl_sarah": (-2.2, 6.0, 0.35, 0.97),
+    "girl_isabella": (-1.7, -4.0, 0.35, 0.94),
+    "girl_grace": (-1.3, 1.5, 0.35, 1.0),
+    "girl_emma": (-0.8, -6.5, 0.35, 1.0),
+    "girl_giulia": (-0.4, 4.5, 0.35, 1.0),
+    "girl_maya": (0.1, -1.0, 0.35, 1.0),
+    "girl_nova": (0.5, 7.0, 0.35, 1.0),
+    "girl_anya": (1.0, -5.5, 0.35, 1.0),
+    "girl_sofia": (1.4, 3.5, 0.35, 1.0),
+    "girl_jessica": (1.9, -2.0, 0.35, 1.0),
+    "girl_alice": (2.3, 6.0, 0.35, 1.0),
+    "girl_chloe": (2.8, -4.0, 0.35, 1.0),
+    "girl_bella": (3.2, 1.5, 0.35, 1.0),
+    "girl_luisa": (3.7, -6.5, 0.35, 1.02),
+    "girl_sky": (4.1, 4.5, 0.35, 1.06),
+    "girl_ruby": (4.6, -1.0, 0.35, 1.09),
+    "girl_young": (5.0, 7.0, 0.35, 1.05),
+    "boy_onyx": (-5.0, -5.5, 0.35, 0.95),
+    "boy_sage": (-4.5, 3.5, 0.35, 0.9),
+    "boy_santa": (-4.1, -2.0, 0.35, 0.95),
+    "boy_fenrir": (-3.6, 6.0, 0.35, 0.95),
+    "boy_george": (-3.1, -4.0, 0.35, 0.95),
+    "boy_adam": (-2.6, 1.5, 0.35, 0.94),
+    "boy_michael": (-2.2, -6.5, 0.35, 1.0),
+    "boy_nico": (-1.7, 4.5, 0.35, 1.0),
+    "boy_lewis": (-1.2, -1.0, 0.35, 1.0),
+    "boy_omega": (-0.7, 7.0, 0.35, 1.0),
+    "boy_daniel": (-0.3, -5.5, 0.35, 1.0),
+    "boy_echo": (0.2, 3.5, 0.35, 1.0),
+    "boy_liam": (0.7, -2.0, 0.35, 1.0),
+    "boy_pedro": (1.2, 6.0, 0.35, 1.0),
+    "boy_fable": (1.6, -4.0, 0.35, 1.0),
+    "boy_eric": (2.1, 1.5, 0.35, 1.0),
+    "boy_alex": (2.6, -6.5, 0.35, 1.0),
+    "boy_psi": (3.1, 4.5, 0.35, 1.0),
+    "boy_host": (3.5, -1.0, 0.35, 1.08),
+    "boy_teen": (4.0, 7.0, 0.35, 1.06),
+    "boy": (3.0, 0.0, 0.0, 1.03),
+    "deep": (-2.0, -7.0, 0.2, 0.93),
+    "original": (0.0, -1.0, 0.0, 0.97),
+}
+
+
+def _timbre(p: VoiceProfile) -> VoiceProfile:
+    t = _TIMBRE.get(p.name)
+    if not t:
+        return p
+    pitch, tilt, push, speed = t
+    return replace(p, pitch_semitones=pitch, tilt_db=tilt, style_push=push, speed=speed)
+
+
 # name -> (gender, display name, tagline). The girl_*/boy_* names derive their label automatically.
 _META = {
     "original": ("female", "Original Voice", "Warm, refined narrator"),
@@ -247,7 +311,7 @@ def _with_meta(p: VoiceProfile) -> VoiceProfile:
 
 
 BUILTIN: dict[str, VoiceProfile] = {
-    p.name: p for p in map(_with_meta, (ORIGINAL, REFERENCE, DEEP, BOY, *GIRLS, *BOYS, *GIRLS_MORE, *BOYS_MORE))}
+    p.name: p for p in map(lambda q: _timbre(_with_meta(q)), (ORIGINAL, REFERENCE, DEEP, BOY, *GIRLS, *BOYS, *GIRLS_MORE, *BOYS_MORE))}
 
 
 def load_profiles(path: str | os.PathLike | None = None) -> dict[str, VoiceProfile]:

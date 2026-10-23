@@ -344,3 +344,22 @@ def test_local_pitch_shift_shortens_audio_and_slows_synthesis():
     ratio = 2 ** (boy.pitch_semitones / 12)
     assert seen["speed"] == pytest.approx(boy.speed / ratio)
     assert a.sample_rate == 24000 and len(a.pcm) // 2 == pytest.approx(24000 / ratio, abs=2)
+
+
+def test_elongated_words_hold_their_phoneme():
+    from speech_engine.backends.local_backend import LocalBackend
+
+    class Tok:
+        def phonemize(self, w, lang):
+            return {"hello": "həlˈoʊ", "please": "plˈiːz", "yes": "jˈɛs"}.get(w.lower(), w)
+
+    class K: tokenizer = Tok()
+
+    be = LocalBackend()
+    got = dict(be._elongation_overrides(K(), "Helloooooo, pleeeease say yessss. mmmm and hello.", "en-us"))
+    assert got["Helloooooo"].startswith("həlˈooo") and got["Helloooooo"].endswith("ʊ")
+    assert got["Helloooooo"].count("o") == 9                              # 6 o's written -> 5 extra letters x 1.5 = 8 extra tokens
+    assert got["pleeeease"].count("i") == 6 and got["pleeeease"].endswith("ːz")
+    assert got["yessss"].count("s") == 6
+    assert "mmmm" not in got and "hello" not in got                     # nothing to hold / not elongated
+    assert be._elongation_overrides(K(), "Helloooo", "fr") == ()

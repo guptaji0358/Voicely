@@ -152,3 +152,17 @@ QScrollArea#voiceStrip > QWidget > QWidget { background: transparent; }
 QLabel#voiceTitle { font-weight: 700; font-size: @font-size; color: @text; }
 QLabel#stageHint { color: @text-muted; }
 QWidget#waveHole { background: transparent; }
+
+/* ---- settings window */
+QDialog#settingsDialog { background: @bg; }
+QListWidget#settingsNav { background: transparent; border: none; border-radius: 0; padding: 0; }
+QListWidget#settingsNav::item { padding: 9px 12px; border-radius: @radius; color: @text-muted; margin: 0; }
+QListWidget#settingsNav::item:hover:!selected { background: @surface-hover; color: @text; }
+QListWidget#settingsNav::item:selected { background: @accent-softer; color: @accent-top; font-weight: 600; }
+QFrame#settingsCard { background: @surface; border: 1px solid @border; border-radius: @radius-lg; }
+QLabel#settingsCardTitle { font-size: 11pt; font-weight: 700; color: @text; }
+QFrame#settingsDivider { background: @border; border: none; }
+QScrollArea#settingsPage, QWidget#settingsPageBody { background: transparent; border: none; }
+QDialog#settingsDialog QLabel#fieldLabel { font-size: @font-size-small; font-weight: 600; }
+QDialog#settingsDialog QGroupBox { background: @surface; border: 1px solid @border; border-radius: @radius-lg; margin-top: 16px; padding: 16px 14px 12px 14px; font-weight: 600; }
+QDialog#settingsDialog QGroupBox::title { subcontrol-origin: margin; left: 16px; padding: 0 6px; color: @text; font-size: 11pt; font-weight: 700; }

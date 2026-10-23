@@ -85,6 +85,18 @@ def download_model(which: str = "kokoro-v1.0.onnx", model_dir: Path | None = Non
     return out
 
 
+def _tilt(chunk: AudioChunk, db: float, corner_hz: float = 1500.0) -> AudioChunk:
+    """Spectral tilt: boost (db > 0) or cut the highs and do the opposite to the lows around ``corner_hz``.
+    Two complementary first-order shelves, so overall level stays about the same."""
+    from scipy.signal import lfilter
+    x = np.frombuffer(chunk.pcm, "<i2").astype(np.float32)
+    a = np.exp(-2 * np.pi * corner_hz / chunk.sample_rate)
+    low = lfilter([1 - a], [1, -a], x)                   # one-pole low-pass
+    g = 10 ** (db / 40)                                  # +-db/2 at each end
+    y = low / g + (x - low) * g
+    return AudioChunk(np.clip(np.rint(y), -32768, 32767).astype("<i2").tobytes(), chunk.sample_rate)
+
+
 class LocalBackend(Backend):
     name = "local"
     requires_network = False
@@ -220,7 +232,7 @@ class LocalBackend(Backend):
     def _style(self, k, profile: VoiceProfile):
         if not profile.local_blend:
             raise ConfigurationError(f"profile {profile.name!r} has no 'local_blend' voices")
-        key = tuple(sorted(profile.local_blend.items()))
+        key = (tuple(sorted(profile.local_blend.items())), profile.style_push)
         if key in self._style_cache:
             return self._style_cache[key]
         known = set(k.get_voices())
@@ -229,6 +241,12 @@ class LocalBackend(Backend):
             raise ConfigurationError(f"unknown Kokoro voice(s) {bad}; available: {sorted(known)}")
         total = sum(profile.local_blend.values())
         style = sum(k.get_voice_style(v) * (w / total) for v, w in profile.local_blend.items())
+        if profile.style_push:
+            # Averaging voices pulls every blend toward the same "typical" voice. Pushing away from the mean of all
+            # voices of the same sex (2nd letter of the Kokoro name) restores what makes this blend individual.
+            sex = {v[1] for v in profile.local_blend}
+            ref = [k.get_voice_style(v) for v in known if v[0] in "ab" and v[1] in sex] or [style]
+            style = style + profile.style_push * (style - np.mean(ref, axis=0))
         self._style_cache[key] = style.astype(np.float32)
         return self._style_cache[key]
 
@@ -275,6 +293,66 @@ class LocalBackend(Backend):
             return ()
         return (("A.I", "ˈeɪ, ˈaɪ" if self._AI_ALONE.fullmatch(text) else "ˈeɪ ˈaɪ"),)
 
+    # Elongated words ("helloooooo", "bachooooo", "yesssss", "nooo"): a letter written 3+ times in a row is held for
+    # longer. The word is read as its normal spelling and the matching phoneme is repeated; Kokoro gives each repeated
+    # token its own ~50 ms, so the sound is sustained smoothly (about 1.5 tokens per extra letter, capped).
+    _ELONG = re.compile(r"\b\w*?([A-Za-z])\1{2,}\w*\b")
+    _RUN = re.compile(r"([A-Za-z])\1{2,}", re.IGNORECASE)
+    _TOKENS_PER_LETTER = 1.5
+    _MAX_EXTRA_TOKENS = 48
+    _VOWELS = set("aeiouɑɐɒæɔəɛɜɪɵʊʌɚɝᵻɤ")
+    _HELD = {"s": "s", "z": "z", "f": "f", "v": "v", "m": "m", "n": "n", "l": "l", "r": "ɹ", "h": "h"}
+    _DOUBLED = {"please", "sweet", "see", "feel", "need", "good", "cool", "soon", "too", "look", "free", "tree", "keep",
+                "sleep", "deep", "sheep", "meet", "week", "green", "queen", "sorry", "happy", "yellow", "hello", "all",
+                "well", "tell", "still", "kiss", "miss", "boss", "less", "wow", "oops", "zoo", "moon", "food", "room",
+                "mood", "cheese", "freeze", "squeeze", "between", "peek", "seek", "speed", "agree", "coffee", "balloon"}
+
+    def _elongation_overrides(self, k, text: str, lang: str) -> tuple:
+        if not (lang or "").lower().startswith("en") or not self._ELONG.search(text):
+            return ()
+        out = []
+        for m in self._ELONG.finditer(text):
+            word = m.group(0)
+            if len(set(word.lower())) == 1:                 # "mmmm", "zzzz": no word to hold, leave to the model
+                continue
+            run = max(self._RUN.finditer(word), key=lambda g: len(g.group(0)))
+            ch, n = run.group(1).lower(), len(run.group(0))
+            at_end = run.end() == len(word) or not word[run.end():].strip("s'’")
+            head, tail = word[:run.start()], word[run.end():]
+            base = head + ch + tail
+            if ch in "eo" and (head + ch * 2 + tail).lower() in self._DOUBLED:
+                base = head + ch * 2 + tail
+            try:
+                ipa = k.tokenizer.phonemize(base, lang).strip()
+            except Exception:
+                continue
+            extra = min(int((n - 1) * self._TOKENS_PER_LETTER + 0.5), self._MAX_EXTRA_TOKENS)
+            out.append((word, self._hold_phoneme(ipa, ch, extra, at_end)))
+        return tuple(out)
+
+    @classmethod
+    def _hold_phoneme(cls, ipa: str, letter: str, extra: int, at_end: bool) -> str:
+        """Repeat the phoneme that ``letter`` stands for ``extra`` more times inside ``ipa``."""
+        if letter in cls._HELD:
+            i = ipa.rfind(cls._HELD[letter])
+            return ipa if i < 0 else ipa[:i + 1] + ipa[i] * extra + ipa[i + 1:]
+        if letter not in "aeiouy":
+            return ipa
+        groups, i = [], 0                                   # vowel groups: (start, stress-marked)
+        while i < len(ipa):
+            if ipa[i] in cls._VOWELS:
+                j = i
+                while j < len(ipa) and ipa[j] in cls._VOWELS:
+                    j += 1
+                groups.append((i, i > 0 and ipa[i - 1] == "ˈ"))
+                i = j
+            else:
+                i += 1
+        if not groups:
+            return ipa
+        pick = groups[-1] if at_end else next((g for g in groups if g[1]), groups[0])
+        return ipa[:pick[0] + 1] + ipa[pick[0]] * extra + ipa[pick[0] + 1:]
+
     def list_voices(self) -> list[str]:
         try:
             return list(self._load().get_voices())
@@ -291,7 +369,8 @@ class LocalBackend(Backend):
             k = self._load()
             style = self._style(k, profile)
             try:
-                overrides = tuple(params.overrides) + self._builtin_overrides(text, profile.local_lang)
+                overrides = (tuple(params.overrides) + self._builtin_overrides(text, profile.local_lang)
+                             + self._elongation_overrides(k, text, profile.local_lang))
                 use_ph = bool(overrides)
                 payload = self._phonemes_with_overrides(k, text, overrides, profile.local_lang) if use_ph else text
                 # Kokoro's duration model glitches (repeats the first sound) below ~0.85x, so slower speech is produced at the
@@ -316,6 +395,8 @@ class LocalBackend(Backend):
         if ratio != 1.0:
             shortened = resample(chunk, int(chunk.sample_rate / ratio))
             chunk = AudioChunk(shortened.pcm, chunk.sample_rate)
+        if profile.tilt_db:
+            chunk = _tilt(chunk, profile.tilt_db)
         return chunk
 
     def close(self) -> None:
