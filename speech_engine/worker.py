@@ -52,7 +52,7 @@ class _Out:
 
 
 SYNC_ACTIONS = {"analyze_text", "dictionary", "feedback", "llm_status", "llm_configure", "asr_status",
-                "session_info", "segment", "accept_repair", "discard_repair"}
+                "google_usage", "session_info", "segment", "accept_repair", "discard_repair"}
 
 
 def log(msg: str) -> None:

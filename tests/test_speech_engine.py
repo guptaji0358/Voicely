@@ -363,3 +363,28 @@ def test_elongated_words_hold_their_phoneme():
     assert got["yessss"].count("s") == 6
     assert "mmmm" not in got and "hello" not in got                     # nothing to hold / not elongated
     assert be._elongation_overrides(K(), "Helloooo", "fr") == ()
+
+
+# ---- Gemini model fallback + usage tracking (fake client; limits are the placeholder config) -------------
+def test_google_switches_model_on_429_and_counts_usage():
+    be, inter = google([api_error(429), wav_bytes()])
+    assert be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event()).pcm
+    assert [r["model"] for r in inter.requests][0] != [r["model"] for r in inter.requests][1]
+    snap = be.usage.snapshot()
+    assert snap["models"][0]["exhausted"] and snap["models"][1]["used"] == 1
+    assert snap["total_limit"] == 250 and snap["window_started"]
+
+
+def test_google_skips_model_at_local_limit_and_window_resets():
+    from speech_engine.google_usage import UsageTracker
+    now = [1000.0]
+    be, inter = google([wav_bytes(), wav_bytes()])
+    be.usage = UsageTracker(clock=lambda: now[0])
+    for _ in range(100):
+        be.usage.record("gemini-3.8-flash-tts")
+    be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event())
+    assert inter.requests[0]["model"] == "gemini-2.5-flash-preview-tts"
+    now[0] += 10 * 3600 + 1                         # 10 h later every counter is back to zero
+    be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event())
+    assert inter.requests[1]["model"] == "gemini-3.8-flash-tts"
+    assert be.usage.snapshot()["total_used"] == 1

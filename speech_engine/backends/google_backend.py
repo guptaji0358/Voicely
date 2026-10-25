@@ -17,6 +17,7 @@ import re
 import threading
 
 from ..audio_pipeline import decode_audio_bytes, time_stretch
+from ..google_usage import UsageTracker
 from ..exceptions import (BackendUnavailableError, ConfigurationError, RateLimitError,
                           SynthesisCancelled, SynthesisError)
 from .base import AudioChunk, Backend, BackendStatus, SynthParams
@@ -42,7 +43,10 @@ class GoogleBackend(Backend):
     max_chunk_chars = 1500
 
     def __init__(self, model: str | None = None, client=None, sleep=None):
-        self.model = model or os.environ.get("SPEECH_ENGINE_GOOGLE_MODEL", DEFAULT_MODEL)
+        env = os.environ.get("SPEECH_ENGINE_GOOGLE_MODEL")
+        self._explicit_model = bool(model or env)    # an explicitly chosen model is tried first
+        self.model = model or env or DEFAULT_MODEL
+        self.usage = UsageTracker()
         self._client = client  # injectable for tests
         self._sleep = sleep
 
@@ -92,6 +96,30 @@ class GoogleBackend(Backend):
         if annotations:
             content["annotations"] = annotations
 
+        # Models are tried in order; one that is over its local limit, answers 429 or does not exist is skipped
+        # until the usage window resets, and the next model takes over.
+        last: Exception | None = None
+        tried = 0
+        for model in self.usage.order(self.model if self._explicit_model else None):
+            if not self.usage.available(model):
+                continue
+            tried += 1
+            outcome = self._try_model(model, content, voice, params, cancel)
+            if not isinstance(outcome, Exception):
+                self.model = model
+                return outcome
+            last = outcome
+            if cancel.is_set():
+                raise SynthesisCancelled("cancelled")
+        if tried == 0:
+            raise RateLimitError("every configured Gemini model has reached its limit; usage resets when the window ends")
+        code = getattr(last, "code", None) or getattr(last, "status_code", None)
+        if code == 429:
+            raise RateLimitError("Google rate limit / quota exceeded on every model; retry later") from last
+        raise SynthesisError(f"Google synthesis failed: {_short(last)}") from last
+
+    def _try_model(self, model, content, voice, params, cancel):
+        """Audio on success, else the exception that means 'try the next model'. Other errors are raised."""
         last: Exception | None = None
         for attempt in range(MAX_ATTEMPTS):
             if cancel.is_set():
@@ -99,7 +127,7 @@ class GoogleBackend(Backend):
             client = self._get_client(params.timeout)
             try:
                 inter = client.interactions.create(
-                    model=self.model,
+                    model=model,
                     input=[{"type": "user_input", "content": [content]}],
                     response_format={"type": "audio"},
                     generation_config={"speech_config": [{"voice": voice}]},
@@ -107,23 +135,27 @@ class GoogleBackend(Backend):
                 audio = inter.output_audio
                 raw = base64.b64decode(audio.data) if isinstance(audio.data, str) else bytes(audio.data)
                 chunk = decode_audio_bytes(raw, getattr(audio, "mime_type", None), self.native_sample_rate)
+                self.usage.record(model)
                 return time_stretch(chunk, params.speed) if params.speed else chunk
             except SynthesisError:
                 raise
             except Exception as exc:  # SDK/network errors
                 last = exc
                 code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
-                retryable = code in (429, 500, 502, 503, 504) or isinstance(exc, (TimeoutError, ConnectionError))
-                if code in (400, 401, 403, 404):
+                if code == 429:                      # quota gone for this model: switch instead of waiting
+                    self.usage.mark_exhausted(model)
+                    return exc
+                if code == 404:                      # unknown / retired model id: try the next one
+                    self.usage.mark_exhausted(model)
+                    return exc
+                retryable = code in (500, 502, 503, 504) or isinstance(exc, (TimeoutError, ConnectionError))
+                if code in (400, 401, 403):
                     raise ConfigurationError(f"Google rejected the request (HTTP {code}): {_short(exc)}") from exc
                 if not retryable or attempt == MAX_ATTEMPTS - 1:
                     break
                 delay = 2 ** attempt
                 if cancel.wait(delay) if self._sleep is None else self._sleep(delay):
                     raise SynthesisCancelled("cancelled")
-        code = getattr(last, "code", None) or getattr(last, "status_code", None)
-        if code == 429:
-            raise RateLimitError("Google rate limit / quota exceeded; retry later or lower request volume") from last
         raise SynthesisError(f"Google synthesis failed: {_short(last)}") from last
 
 

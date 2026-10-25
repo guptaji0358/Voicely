@@ -174,6 +174,9 @@ class QAMixin:
                 st = self.qa.make_asr(req.get("asr")).status()
                 res = {"provider": st.provider, "available": st.available, "model": st.model,
                        "details": st.details, "problems": st.problems}
+            elif action == "google_usage":
+                from .google_usage import UsageTracker
+                res = UsageTracker().snapshot()
             elif action == "session_info":
                 res = self.session_info(req)
             elif action == "segment":

@@ -12,6 +12,7 @@ import io
 import os
 import queue
 import threading
+import time
 import wave
 from pathlib import Path
 from typing import Iterable, Iterator
@@ -220,15 +221,29 @@ class _AtomicSink:
             if self.samples == 0 or not self.tmp.is_file():
                 raise SynthesisError("no audio was produced; nothing saved")
             self._validate()
-            os.replace(self.tmp, self.path)
+            self._replace_with_retry()
         except OSError as exc:
             self.abort()
             msg = "insufficient disk space" if exc.errno == errno.ENOSPC else str(exc)
+            if isinstance(exc, PermissionError):
+                msg += " (the file is probably open in a player/editor or locked by antivirus/sync; close it and retry)"
             raise AudioOutputError(f"cannot finish {self.path}: {msg}") from exc
         except BaseException:
             self.abort()
             raise
         self._done = True
+
+    def _replace_with_retry(self, attempts: int = 10, delay: float = 0.3) -> None:
+        # Windows briefly denies the rename while antivirus/indexer/sync scans the new
+        # file or a player holds the target; retry before giving up.
+        for i in range(attempts):
+            try:
+                os.replace(self.tmp, self.path)
+                return
+            except PermissionError:
+                if i == attempts - 1:
+                    raise
+                time.sleep(delay)
 
     def abort(self) -> None:
         self._done = True

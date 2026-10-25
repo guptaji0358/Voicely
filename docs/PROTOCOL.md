@@ -61,6 +61,7 @@ Everything else answers immediately.
 | `regenerate` (job) | `session_dir, mode: review\|auto, chunks?, candidates[{chunk,written,hint,ipa}], max_attempts, use_llm, allow_network, thresholds?` | `outcomes[{chunk,status: repaired\|improved\|unresolved, attempts[], limitations[], suggested_entry}]`, `candidate_path`, `original_path`, `summary`, `original_preserved:true` |
 | `accept_repair` / `discard_repair` | `session_dir` | `accepted_path`, `summary` / `discarded` |
 | `segment` | `session_dir, chunk, version?, which?` | `path, duration_s, text, spoken, method` (for replay) |
+| `google_usage` | `{}` | `models[{id,used,limit,exhausted}]`, `total_used`, `total_limit`, `window_hours`, `window_started`, `reset_in_s` (local request counts; Gemini models switch automatically when one hits its limit or a 429; limits in `google_models.json` in the data folder) |
 | `session_info` | `session_dir` | chunks, selection, paths, last summary |
 | `dictionary` | `op: list\|search\|add\|update\|delete\|import\|export, ...` | `entries/version`, or `added/updated/deleted` + `regression` when the change would break approved corrections |
 | `feedback` | `op: status\|set_consent\|record\|list\|delete\|delete_all\|export\|regression` | see `docs/LEARNING.md`; `record` needs consent (`CONSENT_REQUIRED`) |

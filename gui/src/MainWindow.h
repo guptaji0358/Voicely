@@ -13,6 +13,7 @@
 #include <QPointer>
 #include <QProcessEnvironment>
 #include <QTemporaryDir>
+#include <QProgressBar>
 #include <QTimer>
 
 #include "ui/VoiceLibraryDialog.h"
@@ -136,6 +137,8 @@ private:
     void updateVersionBar();
     void onAudioBuffer(const QAudioBuffer &buf);
     void tickWave();
+    void refreshUsage();                    // Gemini usage bar: ask the worker for the local request counts
+    void tickUsage();                       // 1 s: reset countdown (computed locally between refreshes)
     void refreshHealth();
     void applyHealth(const QJsonObject &r);
     void onCorrect(const QJsonObject &issue);
@@ -204,7 +207,14 @@ private:
     QAudioOutput *m_audioOut, *m_previewOut;
     QAudioBufferOutput *m_levelOut;
     QTimer m_waveTimer;
-    QTimer m_trimTimer;                      // idle / minimised: give unused pages back to Windows (MemoryTrim.h)
+    QWidget *m_usageRow = nullptr;           // shown only while the Google backend is selected
+    QProgressBar *m_usageBar = nullptr;
+    QLabel *m_usageText = nullptr, *m_usageReset = nullptr;
+    QTimer m_usageTimer;
+    qint64 m_usageResetAtMs = 0;             // wall-clock ms when the window resets; 0 = window not started
+    bool m_usageWindowStarted = false;
+    double m_usageHours = 10.0;
+    QTimer m_trimTimer;                     // idle / minimised: give unused pages back to Windows (MemoryTrim.h)
     QList<QPair<qint64, float>> m_levels;   // (media time in us, level 0..1) decoded ahead of playback
     qint64 m_levelCursor = 0;
     bool m_seeking = false;

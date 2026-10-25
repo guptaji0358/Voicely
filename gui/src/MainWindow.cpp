@@ -423,6 +423,27 @@ void MainWindow::buildUi() {
     a2->addWidget(m_time);
     al->addLayout(a2);
 
+    // Gemini usage: all models' local request counts against their combined limits, plus the reset countdown.
+    m_usageRow = new QWidget;
+    auto *ur = new QHBoxLayout(m_usageRow);
+    ur->setContentsMargins(0, 0, 0, 0);
+    ur->setSpacing(8);
+    m_usageText = new QLabel("Google usage");
+    m_usageText->setObjectName("usageLabel");
+    m_usageBar = new QProgressBar;
+    m_usageBar->setObjectName("usageBar");
+    m_usageBar->setTextVisible(false);
+    m_usageBar->setRange(0, 1000);
+    m_usageReset = new QLabel;
+    m_usageReset->setObjectName("timeLabel");
+    ur->addWidget(m_usageText);
+    ur->addWidget(m_usageBar, 1);
+    ur->addWidget(m_usageReset);
+    m_usageRow->hide();
+    al->addWidget(m_usageRow);
+    m_usageTimer.setInterval(1000);
+    connect(&m_usageTimer, &QTimer::timeout, this, &MainWindow::tickUsage);
+
     m_versionBar = new QWidget;
     auto *vb = new QHBoxLayout(m_versionBar);
     vb->setContentsMargins(0, 0, 0, 0);
@@ -1125,6 +1146,51 @@ void MainWindow::backendChanged() {
     m_voiceNote->setText(note);
     m_voiceNote->setToolTip(note);
     updateHeaderIcon();
+    m_usageRow->setVisible(b == "google");
+    if (b == "google") {
+        refreshUsage();
+        m_usageTimer.start();
+    } else {
+        m_usageTimer.stop();
+    }
+}
+
+void MainWindow::refreshUsage() {
+    if (!m_client || !m_client->isRunning()) return;
+    m_client->call("google_usage", {}, this, [this](const QString &st, const QJsonObject &r) {
+        if (st != "success") return;
+        const double used = r.value("total_used").toDouble(), limit = r.value("total_limit").toDouble();
+        m_usageBar->setValue(limit > 0 ? int(qBound(0.0, used / limit, 1.0) * 1000) : 0);
+        m_usageWindowStarted = r.value("window_started").toBool();
+        m_usageHours = r.value("window_hours").toDouble(10.0);
+        m_usageResetAtMs = QDateTime::currentMSecsSinceEpoch() + qint64(r.value("reset_in_s").toDouble() * 1000);
+        QStringList lines;
+        for (const auto &v : r.value("models").toArray()) {
+            const QJsonObject m = v.toObject();
+            const int lim = m.value("limit").toInt();
+            lines << QString("%1: %2%3%4").arg(m.value("id").toString()).arg(m.value("used").toInt())
+                         .arg(lim ? QString(" / %1").arg(lim) : QString(" (no limit)"))
+                         .arg(m.value("exhausted").toBool() ? "  - limit reached, skipped" : "");
+        }
+        m_usageText->setText(limit > 0 ? QString("Google usage  %1 / %2").arg(int(used)).arg(int(limit)) : QString("Google usage"));
+        m_usageRow->setToolTip("Local request counts per Gemini model (estimate - Google does not report remaining quota). "
+                               "When a model reaches its limit the next one is used automatically.\n" + lines.join("\n"));
+        tickUsage();
+    });
+}
+
+void MainWindow::tickUsage() {
+    if (!m_usageWindowStarted) {
+        m_usageReset->setText(QString("%1h window starts at first use").arg(m_usageHours, 0, 'g', 4));
+        return;
+    }
+    const qint64 left = qMax<qint64>(0, (m_usageResetAtMs - QDateTime::currentMSecsSinceEpoch()) / 1000);
+    m_usageReset->setText(QString("resets in %1:%2:%3").arg(left / 3600).arg((left / 60) % 60, 2, 10, QChar('0'))
+                              .arg(left % 60, 2, 10, QChar('0')));
+    if (left == 0) {                       // window ended: counters were reset on the worker side
+        m_usageWindowStarted = false;
+        refreshUsage();
+    }
 }
 
 void MainWindow::onFinished(const QString &id, const QString &status, const QJsonObject &r) {
@@ -1325,6 +1391,7 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
     m_jobIsTest = false;
     setState(State::Idle);
     if (!m_client->isRunning()) setState(State::Unavailable);
+    else if (m_usageRow->isVisible()) refreshUsage();    // a Gemini request may have been counted or hit its limit
 }
 
 void MainWindow::onProgress(const QString &id, int pct, const QString &msg) {
