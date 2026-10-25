@@ -1,5 +1,6 @@
 #include "AudioDragHandle.h"
 
+#include "Icons.h"
 #include "ThemeManager.h"
 
 #include <QApplication>
@@ -81,10 +82,10 @@ void AudioDragHandle::paintEvent(QPaintEvent *) {
     p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), rad, rad);
 
     // grip: 2 x 3 dots
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(255, 255, 255, ready ? 210 : 90));
-    for (int cx = 0; cx < 2; ++cx)
-        for (int cy = 0; cy < 3; ++cy) p.drawEllipse(QPointF(r.left() + 11 + cx * 5, r.center().y() - 5 + cy * 5), 1.3, 1.3);
+    p.save();
+    p.setOpacity(ready ? 0.82 : 0.35);
+    Icons::paint(&p, Icons::path("grip"), QRectF(r.left() + 8, r.center().y() - 8, 12, 16), Qt::white);
+    p.restore();
 
     QFont f = font();
     f.setPointSizeF(9);

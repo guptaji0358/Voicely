@@ -122,10 +122,8 @@ protected:
                 p.drawText(QRectF(row.left(), row.top(), row.width() - 14, row.height()), Qt::AlignVCenter | Qt::AlignRight, sc);
             }
             if (a->menu()) {                                           // sub-menu chevron
-                p.setPen(QPen(muted, 1.5, Qt::SolidLine, Qt::RoundCap));
-                const QPointF c(row.right() - 14, row.center().y());
-                p.drawLine(c + QPointF(-2.5, -4), c + QPointF(1.5, 0));
-                p.drawLine(c + QPointF(1.5, 0), c + QPointF(-2.5, 4));
+                const QPointF c(row.right() - 14.8, row.center().y());
+                Icons::paint(&p, Icons::path("chevron-right"), QRectF(c.x() - 8, c.y() - 8, 16, 16), muted);
             }
         }
     }

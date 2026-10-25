@@ -179,13 +179,11 @@ void ModelLabDialog::buildUi() {
     m_status = new QLabel(tr("Starting Model Lab worker...")); m_status->setObjectName("statusLabel");
     m_status->setWordWrap(true);
     m_stateLabel = new QLabel(tr("No model yet")); m_stateLabel->setObjectName("labState");
-    m_stateLabel->setStyleSheet("padding:3px 10px; border-radius:10px; background:rgba(255,255,255,0.10);");
     head->addWidget(title); head->addSpacing(10); head->addWidget(m_icon); head->addWidget(m_status, 1); head->addWidget(m_stateLabel);
     root->addLayout(head);
     m_hardware = new QLabel; m_hardware->setObjectName("muted");
     root->addWidget(m_hardware);
     m_banner = new QLabel; m_banner->setWordWrap(true); m_banner->setObjectName("labBanner"); m_banner->hide();
-    m_banner->setStyleSheet("color:#e5b84a;");
     root->addWidget(m_banner);
 
     auto *cols = new QHBoxLayout; cols->setSpacing(12);

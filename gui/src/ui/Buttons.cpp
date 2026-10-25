@@ -331,16 +331,9 @@ void PlayButton::paintEvent(QPaintEvent *) {
     if (m_morph < 0.999) {
         p.save();
         p.setOpacity(1 - m_morph);
-        p.translate(c.x() + s * 0.12, c.y());
+        p.translate(c);
         p.scale(1 - 0.25 * m_morph, 1 - 0.25 * m_morph);
-        QPainterPath tri;
-        tri.moveTo(-s * 0.78, -s * 1.0);
-        tri.lineTo(s * 1.0, 0);
-        tri.lineTo(-s * 0.78, s * 1.0);
-        tri.closeSubpath();
-        p.setBrush(ink);
-        p.setPen(QPen(ink, 2.2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-        p.drawPath(tri);
+        Icons::paint(&p, Icons::path("play-solid"), QRectF(-2 * s, -2 * s, 4 * s, 4 * s), ink);
         p.restore();
     }
     if (m_morph > 0.001) {
@@ -348,9 +341,7 @@ void PlayButton::paintEvent(QPaintEvent *) {
         p.setOpacity(m_morph);
         p.translate(c);
         p.scale(0.75 + 0.25 * m_morph, 0.75 + 0.25 * m_morph);
-        p.setBrush(ink);
-        p.setPen(Qt::NoPen);
-        p.drawRoundedRect(QRectF(-s * 0.82, -s * 0.82, s * 1.64, s * 1.64), 2.6, 2.6);
+        Icons::paint(&p, Icons::path("stop-solid"), QRectF(-2 * s, -2 * s, 4 * s, 4 * s), ink);
         p.restore();
     }
 }

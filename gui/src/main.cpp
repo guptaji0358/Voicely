@@ -2,7 +2,6 @@
 #include "ui/Icons.h"
 
 #include <QApplication>
-#include <QLinearGradient>
 #include <QPainter>
 #include <QPixmap>
 #include <QScreen>
@@ -14,7 +13,7 @@
 #include <shobjidl.h>
 #endif
 
-// Start-up splash: drawn in code so it can appear before MainWindow (which spawns the speech engine) is built.
+// Start-up splash: background is an SVG asset, text is drawn in code so it can appear before MainWindow (which spawns the speech engine) is built.
 static QPixmap makeSplashPixmap(qreal dpr) {
     const QSize sz(460, 280);
     QPixmap pm(sz * dpr);
@@ -22,12 +21,7 @@ static QPixmap makeSplashPixmap(qreal dpr) {
     pm.fill(Qt::transparent);
     QPainter p(&pm);
     p.setRenderHints(QPainter::Antialiasing | QPainter::TextAntialiasing | QPainter::SmoothPixmapTransform);
-    QLinearGradient g(0, 0, sz.width(), sz.height());
-    g.setColorAt(0, QColor("#14172a"));
-    g.setColorAt(1, QColor("#241a3f"));
-    p.setPen(QPen(QColor(255, 255, 255, 40), 1));
-    p.setBrush(g);
-    p.drawRoundedRect(QRectF(0.5, 0.5, sz.width() - 1, sz.height() - 1), 18, 18);
+    Icons::paint(&p, ":/illustrations/splash.svg", QRectF(QPointF(0, 0), QSizeF(sz)));
     const QPixmap logo = Icons::icon("app-logo").pixmap(QSize(88, 88));
     p.drawPixmap((sz.width() - 88) / 2, 44, logo);
     QFont f = p.font();

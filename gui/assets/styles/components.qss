@@ -28,6 +28,8 @@ QLabel#sectionTitle { font-size: @font-size-small; font-weight: 600; color: @tex
 QLabel#muted, QLabel#fieldLabel { color: @text-muted; }
 QLabel#muted[small="true"] { font-size: @font-size-small; }
 QLabel#statusLabel { color: @text-muted; }
+QLabel#labState { padding: 3px 10px; border-radius: 10px; background: rgba(255,255,255,0.10); }
+QLabel#labBanner { color: @warning; }
 QLabel#statusLabel[state="error"] { color: @danger; }
 QLabel#outputLabel { color: @text-muted; font-size: @font-size-small; }
 QLabel#timeLabel { color: @text-muted; font-family: "Cascadia Mono", "Consolas", monospace; font-size: @font-size-small; }

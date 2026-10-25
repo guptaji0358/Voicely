@@ -3,6 +3,7 @@
 //   FancyCheckBox - drop-in QCheckBox with a gradient box, an animated check stroke, a hover halo and a focus ring.
 //   Cursors       - themed arrow and pointing-hand cursors drawn at 2x so they stay sharp on high-DPI screens.
 #include "Motion.h"
+#include "Icons.h"
 #include "ThemeManager.h"
 
 #include <QCheckBox>
@@ -156,55 +157,13 @@ private:
 
 namespace Cursors {
 namespace detail {
-inline QPainterPath handPath() {
-    QPainterPath p;
-    p.addRoundedRect(QRectF(9, 3, 5.6, 16), 2.8, 2.8);          // index finger
-    p.addRoundedRect(QRectF(14.2, 11, 4.6, 10), 2.3, 2.3);      // middle knuckle
-    p.addRoundedRect(QRectF(18.4, 12.2, 4.6, 9.5), 2.3, 2.3);   // ring knuckle
-    p.addRoundedRect(QRectF(22.6, 14, 4.2, 8), 2.1, 2.1);       // little knuckle
-    p.addRoundedRect(QRectF(7, 15, 20, 12), 5.5, 5.5);          // palm
-    return p.simplified();
-}
-inline QPainterPath arrowPath() {
-    QPainterPath p;
-    p.moveTo(4, 2.5);
-    p.lineTo(4, 22.5);
-    p.lineTo(9.2, 17.6);
-    p.lineTo(12.8, 25.6);
-    p.lineTo(16.6, 23.9);
-    p.lineTo(13, 16.2);
-    p.lineTo(20.4, 16.2);
-    p.closeSubpath();
-    return p;
-}
 inline QCursor make(bool hand) {
     const ThemeManager &th = ThemeManager::instance();
-    const QColor top = th.color("accent-top", QColor("#6aa1ff")), bot = th.color("accent-bottom", QColor("#3568de"));
+    // arrow: accent fill, white outline; hand: white fill, accent outline (colour drives currentColor in the SVG)
+    const QColor tint = hand ? th.color("accent-bottom", QColor("#3568de")) : th.color("accent-top", QColor("#6aa1ff"));
     constexpr int kLogical = 32, kScale = 2;
-    QPixmap pm(kLogical * kScale, kLogical * kScale);
-    pm.setDevicePixelRatio(kScale);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing);
-    const QPainterPath shape = hand ? handPath() : arrowPath();
-    p.save();                                                   // soft drop shadow
-    p.translate(1.2, 1.6);
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(0, 0, 0, 70));
-    p.drawPath(shape);
-    p.restore();
-    if (hand) {                                                 // white hand, accent outline
-        p.setBrush(QColor("#ffffff"));
-        p.setPen(QPen(bot, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    } else {                                                    // accent arrow, white outline
-        QLinearGradient g(0, 2, 0, 26);
-        g.setColorAt(0, top);
-        g.setColorAt(1, bot);
-        p.setBrush(g);
-        p.setPen(QPen(QColor("#ffffff"), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-    }
-    p.drawPath(shape);
-    p.end();
+    const QPixmap pm = Icons::pixmap(hand ? ":/icons/cursor-hand.svg" : ":/icons/cursor-arrow.svg",
+                                     QSize(kLogical, kLogical), tint, kScale);
     return hand ? QCursor(pm, 11, 3) : QCursor(pm, 4, 3);
 }
 inline QCursor cached(bool hand) {

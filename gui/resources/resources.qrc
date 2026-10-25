@@ -45,6 +45,11 @@
     <file alias="icons/window-maximize.svg">../assets/icons/window-maximize.svg</file>
     <file alias="icons/window-minimize.svg">../assets/icons/window-minimize.svg</file>
     <file alias="icons/window-restore.svg">../assets/icons/window-restore.svg</file>
+    <file alias="icons/cursor-arrow.svg">../assets/icons/cursor-arrow.svg</file>
+    <file alias="icons/cursor-hand.svg">../assets/icons/cursor-hand.svg</file>
+    <file alias="icons/grip.svg">../assets/icons/grip.svg</file>
+    <file alias="icons/play-solid.svg">../assets/icons/play-solid.svg</file>
+    <file alias="icons/stop-solid.svg">../assets/icons/stop-solid.svg</file>
     <file alias="sounds/click.wav">../assets/sounds/click.wav</file>
     <file alias="sounds/toggle.wav">../assets/sounds/toggle.wav</file>
     <file alias="sounds/generate.wav">../assets/sounds/generate.wav</file>
@@ -54,5 +59,6 @@
     <file alias="sounds/drop.wav">../assets/sounds/drop.wav</file>
     <file alias="illustrations/empty-audio.svg">../assets/illustrations/empty-audio.svg</file>
     <file alias="illustrations/empty-input.svg">../assets/illustrations/empty-input.svg</file>
+    <file alias="illustrations/splash.svg">../assets/illustrations/splash.svg</file>
   </qresource>
 </RCC>
