@@ -18,11 +18,13 @@ class SettingsDialog : public StyledDialog {
     Q_OBJECT
 public:
     SettingsDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, const QString &apiKey,
-                   QWidget *parent = nullptr);
+                   const QString &azureKey = {}, const QString &azureRegion = {}, QWidget *parent = nullptr);
 
     QString pythonExe() const;
     QString engineRoot() const;
     QString apiKey() const;
+    QString azureKey() const;
+    QString azureRegion() const;
     bool reduceMotion() const;
     bool effects() const;
     bool sounds() const;
@@ -33,10 +35,10 @@ signals:
     void pronunciationChanged();
 
 private:
-    QWidget *buildGeneral(const QString &apiKey);
+    QWidget *buildGeneral(const QString &apiKey, const QString &azureKey, const QString &azureRegion);
     QListWidget *m_nav;
     QStackedWidget *m_pages;
-    QLineEdit *m_py, *m_root, *m_key;
+    QLineEdit *m_py, *m_root, *m_key, *m_azKey, *m_azRegion;
     QCheckBox *m_reduce, *m_fx, *m_snd, *m_native;
     QSpinBox *m_keep;
     PronSettings *m_pron;

@@ -122,6 +122,8 @@ static void useDefaultOutput(QAudioOutput *out) {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new ProtocolClient(this)) {
     m_sessionApiKey = SecretStore::loadApiKey();      // remembered between runs (DPAPI-encrypted, per Windows user)
+    m_azureKey = SecretStore::loadAzureKey();
+    m_azureRegion = Config::settings().value("azureRegion").toString();
     const bool custom = Frameless::customFrameWanted();
     if (custom) {
         // Frameless + translucent: the shell paints the rounded, shadowed window. The extra hints keep the taskbar
@@ -1067,6 +1069,8 @@ QProcessEnvironment MainWindow::workerEnv() const {
     for (const char *k : {"OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"})
         if (!qEnvironmentVariableIsSet(k)) e.insert(k, "1");
     if (!m_sessionApiKey.isEmpty()) e.insert("GEMINI_API_KEY", m_sessionApiKey);  // persisted only DPAPI-encrypted (SecretStore)
+    if (!m_azureKey.isEmpty()) e.insert("AZURE_SPEECH_KEY", m_azureKey);
+    if (!m_azureRegion.isEmpty()) e.insert("AZURE_SPEECH_REGION", m_azureRegion);
     return e;
 }
 
@@ -2312,7 +2316,7 @@ bool MainWindow::hasUnsavedAudio() const {
 
 void MainWindow::openSettings() {
     SettingsDialog d(m_client, m_backend->count() ? m_backend->currentData().toString() : QString(), backendHasIpa(),
-                     m_sessionApiKey, this);
+                     m_sessionApiKey, m_azureKey, m_azureRegion, this);
     connect(&d, &SettingsDialog::pronunciationChanged, this, [this] {
         m_client->call("health", {}, this, [this](const QString &st, const QJsonObject &r) {
             if (st == "success") { m_health = r; applyHealth(r); }
@@ -2329,6 +2333,10 @@ void MainWindow::openSettings() {
     applyEffects();
     m_sessionApiKey = d.apiKey();
     SecretStore::saveApiKey(m_sessionApiKey);
+    m_azureKey = d.azureKey();
+    m_azureRegion = d.azureRegion();
+    SecretStore::saveAzureKey(m_azureKey);
+    Config::settings().setValue("azureRegion", m_azureRegion);
     if (m_state == State::Generating || m_state == State::Exporting || m_state == State::Rechecking || m_state == State::Repairing)
         cancelJob();
     // Restart: stopping triggers workerStopped; start again afterwards.

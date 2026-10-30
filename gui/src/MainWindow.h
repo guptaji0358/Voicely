@@ -180,7 +180,7 @@ private:
     bool m_analyzing = false;
     int m_genCounter = 0, m_analysisSeq = 0;
     QJsonObject m_caps, m_health, m_repairResult;
-    QString m_sessionApiKey;
+    QString m_sessionApiKey, m_azureKey, m_azureRegion;
 
     ShellWidget *m_shell;
     DropOverlay *m_drop = nullptr;

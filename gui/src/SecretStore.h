@@ -41,19 +41,24 @@ inline QByteArray unprotect(const QByteArray &blob) {
 #endif
 }
 
-inline QString loadApiKey() {
-    const QByteArray blob = QByteArray::fromBase64(Config::settings().value("apiKeyEnc").toByteArray());
+inline QString loadSecret(const char *name) {
+    const QByteArray blob = QByteArray::fromBase64(Config::settings().value(name).toByteArray());
     return blob.isEmpty() ? QString() : QString::fromUtf8(unprotect(blob));
 }
 
-// An empty key removes the stored copy (only done when the user clears the field and saves).
-inline void saveApiKey(const QString &key) {
-    if (key.isEmpty()) {
-        Config::settings().remove("apiKeyEnc");
+// An empty value removes the stored copy (only done when the user clears the field and saves).
+inline void saveSecret(const char *name, const QString &value) {
+    if (value.isEmpty()) {
+        Config::settings().remove(name);
         return;
     }
-    const QByteArray blob = protect(key.toUtf8());
-    if (!blob.isEmpty()) Config::settings().setValue("apiKeyEnc", blob.toBase64());
+    const QByteArray blob = protect(value.toUtf8());
+    if (!blob.isEmpty()) Config::settings().setValue(name, blob.toBase64());
 }
+
+inline QString loadApiKey() { return loadSecret("apiKeyEnc"); }
+inline void saveApiKey(const QString &key) { saveSecret("apiKeyEnc", key); }
+inline QString loadAzureKey() { return loadSecret("azureKeyEnc"); }
+inline void saveAzureKey(const QString &key) { saveSecret("azureKeyEnc", key); }
 
 }  // namespace SecretStore

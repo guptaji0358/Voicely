@@ -82,7 +82,7 @@ QWidget *fieldRow(const QString &caption, QLineEdit *edit, QPushButton *browse) 
 }  // namespace
 
 SettingsDialog::SettingsDialog(ProtocolClient *client, const QString &backend, bool ipaSupported, const QString &apiKey,
-                               QWidget *parent)
+                               const QString &azureKey, const QString &azureRegion, QWidget *parent)
     : StyledDialog(parent, "settings") {
     setObjectName("settingsDialog");
     setWindowTitle(tr("Settings"));
@@ -124,7 +124,7 @@ SettingsDialog::SettingsDialog(ProtocolClient *client, const QString &backend, b
         sc->setWidget(inner);
         return sc;
     };
-    m_pages->addWidget(page(buildGeneral(apiKey)));
+    m_pages->addWidget(page(buildGeneral(apiKey, azureKey, azureRegion)));
     m_pron = new PronSettings(client, backend, ipaSupported);
     m_pages->addWidget(page(m_pron));
     mid->addWidget(m_pages, 1);
@@ -151,7 +151,7 @@ SettingsDialog::SettingsDialog(ProtocolClient *client, const QString &backend, b
     connect(save, &QPushButton::clicked, this, &QDialog::accept);
 }
 
-QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
+QWidget *SettingsDialog::buildGeneral(const QString &apiKey, const QString &azureKey, const QString &azureRegion) {
     auto *host = new QWidget;
     host->setObjectName("settingsPageBody");
     auto *col = new QVBoxLayout(host);
@@ -202,6 +202,29 @@ QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
     google.body->addWidget(how);
     col->addWidget(google.frame);
 
+    // --- Azure key
+    auto azure = section(tr("Azure AI Speech key"),
+                         tr("Only needed for the Azure voices. The key is stored encrypted with Windows, readable only by your account."));
+    m_azKey = new QLineEdit(azureKey);
+    m_azKey->setEchoMode(QLineEdit::Password);
+    m_azKey->setPlaceholderText(tr("Paste Key 1, or leave empty to use AZURE_SPEECH_KEY"));
+    m_azRegion = new QLineEdit(azureRegion);
+    m_azRegion->setPlaceholderText(tr("Region id, for example eastus (or AZURE_SPEECH_REGION)"));
+    azure.body->addWidget(field(tr("Speech key (remembered)"), m_azKey));
+    azure.body->addWidget(field(tr("Region"), m_azRegion));
+    auto *azHow = new QLabel(
+        tr("Find both in the Azure portal under your Speech resource, <b>Keys and Endpoint</b>. "
+           "<a href='https://learn.microsoft.com/azure/ai-services/speech-service/overview'>About Azure AI Speech</a>. "
+           "Saving restarts the worker."));
+    azHow->setObjectName("muted");
+    azHow->setWordWrap(true);
+    azHow->setTextFormat(Qt::RichText);
+    azHow->setOpenExternalLinks(true);
+    azHow->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    azHow->setPalette(pal);
+    azure.body->addWidget(azHow);
+    col->addWidget(azure.frame);
+
     // --- Appearance
     auto look = section(tr("Appearance"));
     auto check = [&](const QString &text, const QString &hint, bool on) {
@@ -247,6 +270,8 @@ QWidget *SettingsDialog::buildGeneral(const QString &apiKey) {
 QString SettingsDialog::pythonExe() const { return m_py->text().trimmed(); }
 QString SettingsDialog::engineRoot() const { return m_root->text().trimmed(); }
 QString SettingsDialog::apiKey() const { return m_key->text().trimmed(); }
+QString SettingsDialog::azureKey() const { return m_azKey->text().trimmed(); }
+QString SettingsDialog::azureRegion() const { return m_azRegion->text().trimmed(); }
 bool SettingsDialog::reduceMotion() const { return m_reduce->isChecked(); }
 bool SettingsDialog::effects() const { return m_fx->isChecked(); }
 bool SettingsDialog::sounds() const { return m_snd->isChecked(); }
