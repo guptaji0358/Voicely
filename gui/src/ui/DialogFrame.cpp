@@ -193,7 +193,7 @@ public:
         bottom->addStretch(1);
         struct Def { QMessageBox::StandardButton b; const char *label; };
         const Def all[] = {{QMessageBox::Yes, "Yes"}, {QMessageBox::No, "No"}, {QMessageBox::Ok, "OK"},
-                           {QMessageBox::Cancel, "Cancel"}, {QMessageBox::Close, "Close"}};
+                           {QMessageBox::Save, "Save"}, {QMessageBox::Discard, "Discard"}, {QMessageBox::Cancel, "Cancel"}, {QMessageBox::Close, "Close"}};
         QMessageBox::StandardButton primary = def;
         if (primary == QMessageBox::NoButton)
             primary = (buttons & QMessageBox::Yes) ? QMessageBox::Yes : (buttons & QMessageBox::Ok) ? QMessageBox::Ok : QMessageBox::NoButton;

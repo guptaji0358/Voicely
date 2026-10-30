@@ -136,7 +136,9 @@ void ProtocolClient::handleLine(const QByteArray &line) {
         m_ready = true;
         emit ready();
     } else if (event == "progress") {
-        if (m_pending.contains(id)) emit progress(id, o.value("progress").toInt(), o.value("message").toString());
+        if (!m_pending.contains(id)) return;
+        if (o.contains("chunk_path")) emit progressDetail(id, o);
+        else emit progress(id, o.value("progress").toInt(), o.value("message").toString());
     } else if (!event.isEmpty() && m_pending.contains(id)) {
         emit eventReceived(id, event, o);
     } else if (o.contains("status")) {

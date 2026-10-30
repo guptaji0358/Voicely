@@ -71,7 +71,7 @@ private slots:
         QVERIFY(qa);
         QTRY_VERIFY_WITH_TIMEOUT(get<QPushButton>("recheckButton") != nullptr, 1000);
     }
-    void cleanupTestCase() { w->close(); delete w; }
+    void cleanupTestCase() { w->setConfirmClose(false); w->close(); delete w; }
 
     void precheckShowsReviewDialogThenGenerates() {
         QVERIFY(w->preCheckEnabled());
@@ -166,6 +166,7 @@ private slots:
 
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("TTS_NO_CLOSE_PROMPT", "1");     // windows closed by tests must not wait for a person
     QApplication app(argc, argv);
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QTemporaryDir cfg, data;

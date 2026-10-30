@@ -39,6 +39,9 @@ public:
 signals:
     void ready();                                               // worker sent its "ready" event
     void progress(const QString &id, int percent, const QString &message);
+    // A progress event that carries data (e.g. a finished audio chunk for live playback): the full message object.
+    // Such events do not also emit progress(), so the percentage and status text are never disturbed by them.
+    void progressDetail(const QString &id, const QJsonObject &message);
     // Any other event for a pending request (e.g. "metric" from the Model Lab worker): the full message object.
     void eventReceived(const QString &id, const QString &name, const QJsonObject &message);
     // status: "success" | "error" | "cancelled". For error: code + message in `response`.

@@ -54,13 +54,20 @@ class QAMixin:
         def on_progress(done, total_chunks, _txt):
             self.progress(rid, done * 95 // max(total_chunks, 1), f"chunk {done}/{total_chunks}")
 
+        live = bool(req.get("stream"))          # the GUI plays finished chunks while the rest is still being generated
+
+        def on_chunk(idx, path, pause_ms, rate, total):
+            if live:
+                self.progress(rid, 0, "chunk ready", chunk_index=idx, chunk_total=total, chunk_path=str(path),
+                              pause_ms=int(pause_ms or 0), sample_rate=int(rate or 0))
+
         self.progress(rid, 0, "starting")
         s = Session.create(req["session_dir"], text, backend, profile,
                            SynthParams(speed=req.get("speed"), style=req.get("style") or None,
                                    stretch=_stretch(req)), language,
                            qa.dictionary if req.get("dictionary", True) else None, cancel, on_progress,
                            qa.versions(backend.name),
-                           emotion=(req.get("emotion"), req.get("emotion_intensity")))
+                           emotion=(req.get("emotion"), req.get("emotion_intensity")), on_chunk=on_chunk)
         try:                                   # opt-in learning record; it must never be able to break a generation
             from .experience import ExperienceStore
             ExperienceStore().add_generation(s.m["session_id"], s.chunks, language, profile.name, backend.name)

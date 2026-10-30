@@ -24,8 +24,8 @@ from pathlib import Path
 PROTOCOL_VERSION = 2                      # current; version-1 requests are still accepted (see docs/PROTOCOL.md)
 SUPPORTED_VERSIONS = (1, 2)
 V1_ACTIONS = {"health", "capabilities", "cancel", "synthesize", "export", "shutdown"}
-JOB_ACTIONS = {"synthesize", "export", "recheck", "regenerate", "llm_analyze", "llm_explain", "asr_download"}
-MAX_TEXT_CHARS = 2_000_000
+JOB_ACTIONS = {"synthesize", "export", "recheck", "regenerate", "llm_analyze", "llm_explain", "asr_download", "extract_text"}
+MAX_TEXT_CHARS = int(os.environ.get("SPEECH_ENGINE_MAX_TEXT_CHARS") or 2_000_000)   # env override: tests only
 LANGUAGES = {  # Kokoro language codes; English-blend voices read other languages with an accent
     "en-us": "English (US)", "en-gb": "English (UK)", "fr-fr": "French", "es": "Spanish",
     "hi": "Hindi", "it": "Italian", "pt-br": "Portuguese (BR)", "ja": "Japanese", "cmn": "Mandarin",
@@ -89,9 +89,9 @@ class Worker(QAMixin):
     def ok(self, rid, **fields):
         self.out.send({"request_id": rid, "status": "success", "protocol_version": self._v(rid), **fields})
 
-    def progress(self, rid, pct, message=""):
+    def progress(self, rid, pct, message="", **extra):
         self.out.send({"request_id": rid, "event": "progress", "progress": int(max(0, min(100, pct))),
-                       "message": message, "protocol_version": self._v(rid)})
+                       "message": message, "protocol_version": self._v(rid), **extra})
 
     # ---- dispatch --------------------------------------------------------
     def handle(self, line: str) -> None:
@@ -190,6 +190,7 @@ class Worker(QAMixin):
             pron["mock"] = {"respelling": True, "ipa": False}
         from .emotions import emotion_list
         self.ok(rid, voices=voices, emotions=emotion_list(), backends=backends, formats=["wav", "mp3"],
+                max_text_chars=MAX_TEXT_CHARS,
                 bitrates=[64, 96, 128, 160, 192, 224, 256, 320],
                 **({"pronunciation": pron, "protocol_versions": list(SUPPORTED_VERSIONS)} if self._v(rid) >= 2 else {}))
 
@@ -219,7 +220,7 @@ class Worker(QAMixin):
         try:
             fn = {"synthesize": self.synthesize, "export": self.export, "recheck": self.recheck,
                   "regenerate": self.regenerate, "llm_analyze": self.llm_analyze, "llm_explain": self.llm_explain,
-                  "asr_download": self.asr_download}[action]
+                  "asr_download": self.asr_download, "extract_text": self.extract_text}[action]
             self.ok(rid, **fn(rid, req, cancel))
         except SynthesisCancelled:
             self.out.send({"request_id": rid, "status": "cancelled", "protocol_version": self._v(rid)})
@@ -315,6 +316,15 @@ class Worker(QAMixin):
         self.progress(rid, 100, "done")
         info.update(output_path=str(out), backend=backend.name, voice=profile.name, chunks=total)
         return info
+
+    def extract_text(self, rid, req, cancel):
+        """Plain text of a PDF / DOCX / EPUB / text file for the Import button (see doc_extract.py)."""
+        from .doc_extract import extract_text
+        from .exceptions import InvalidInputError
+        path = req.get("path")
+        if not isinstance(path, str) or not path:
+            raise InvalidInputError("path is required")
+        return extract_text(path, cancel, lambda pct, msg: self.progress(rid, pct, msg))
 
     def export(self, rid, req, cancel):
         """Re-encode an already generated WAV to MP3 (or copy it as WAV) without re-synthesizing."""

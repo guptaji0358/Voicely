@@ -57,7 +57,7 @@ private slots:
         auto *be = get<QComboBox>("backendCombo");
         be->setCurrentIndex(be->findData("mock"));
     }
-    void cleanupTestCase() { w->close(); delete w; }
+    void cleanupTestCase() { w->setConfirmClose(false); w->close(); delete w; }
 
     void stylesheetLoadedFromResources() {
         auto &t = ThemeManager::instance();
@@ -482,6 +482,7 @@ private slots:
 
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("TTS_NO_CLOSE_PROMPT", "1");     // windows closed by tests must not wait for a person
     QApplication app(argc, argv);
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QTemporaryDir cfg;

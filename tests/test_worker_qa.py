@@ -183,3 +183,22 @@ def test_validation_busy_cancel_and_malformed(w, tmp_path):
                 break
     finally:
         slow.p.kill()
+
+
+def test_stream_option_announces_each_finished_chunk_in_order(w, tmp_path):
+    """Live playback: with stream=true every finished chunk is reported (file, pause, rate) before the job ends."""
+    import wave
+    m, ev = synth(w, tmp_path, stream=True)
+    assert m["status"] == "success"
+    ready = [e for e in ev if "chunk_path" in e]
+    assert [e["chunk_index"] for e in ready] == list(range(m["chunks"]))
+    assert all(e["chunk_total"] == m["chunks"] for e in ready)
+    for e in ready:
+        assert Path(e["chunk_path"]).is_file() and e["sample_rate"] > 0 and e["pause_ms"] >= 0
+        with wave.open(e["chunk_path"]) as f:
+            assert f.getframerate() == e["sample_rate"] and f.getnchannels() == 1 and f.getsampwidth() == 2
+
+
+def test_no_chunk_events_unless_requested(w, tmp_path):
+    m, ev = synth(w, tmp_path)
+    assert m["status"] == "success" and not any("chunk_path" in e for e in ev)

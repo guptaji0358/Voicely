@@ -117,7 +117,8 @@ class Session:
     @classmethod
     def create(cls, folder: str | Path, text: str, backend: Backend, profile: VoiceProfile, params: SynthParams,
                language: str, dictionary: PronDictionary | None, cancel: threading.Event,
-               progress=None, versions: dict | None = None, emotion: tuple = (None, None)) -> "Session":
+               progress=None, versions: dict | None = None, emotion: tuple = (None, None),
+               on_chunk=None) -> "Session":
         folder = Path(folder)
         if folder.exists() and not folder.is_dir():
             raise InvalidInputError(f"{folder} is not a folder")
@@ -143,6 +144,8 @@ class Session:
                                   "source_span": list(sp[:2]) if sp else None, "source_span_exact": bool(sp and sp[2]),
                                   "versions": [v]})
             s.m["selection"]["accepted"][str(i)] = "g0"
+            if on_chunk:                       # live playback: the finished chunk file, its pause and the sample rate
+                on_chunk(i, s.dir / v["file"], ch.pause_ms, s.m["sample_rate"], len(chunks))
             if progress:
                 progress(i + 1, len(chunks), ch.text)
         s.save()

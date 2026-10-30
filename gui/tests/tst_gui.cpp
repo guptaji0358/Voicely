@@ -1,6 +1,7 @@
 // GUI tests (offscreen): drive the real MainWindow against the real worker (mock backend).
 #include "MainWindow.h"
 #include "ui/AudioDragHandle.h"
+#include "ui/LiveAudio.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -11,7 +12,10 @@
 #include <QUrl>
 #include <QMediaPlayer>
 #include <QPlainTextEdit>
+#include <QProcess>
 #include <QProgressBar>
+#include <QSettings>
+#include <QSignalSpy>
 #include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -44,7 +48,7 @@ private slots:
         be->setCurrentIndex(i);
         QVERIFY(get<QLabel>("statusLabel")->text().startsWith("Ready"));
     }
-    void cleanupTestCase() { w->close(); delete w; }
+    void cleanupTestCase() { w->setConfirmClose(false); w->close(); delete w; }
 
     void countsAndClear() {
         auto *ed = get<QPlainTextEdit>("textEditor");
@@ -247,6 +251,189 @@ private slots:
         QVERIFY(QFileInfo(d.filePath("real speech.mp3")).size() > 20000);
         r.close();
     }
+
+    // ---- document import, limits, counters, remembered settings, unsaved-audio prompt, ETA, live audio ----
+    static QString makeDocx(const QString &path, const QStringList &paras) {
+        const QString code = QStringLiteral(
+            "import sys, zipfile\n"
+            "W='http://schemas.openxmlformats.org/wordprocessingml/2006/main'\n"
+            "b=''.join('<w:p><w:r><w:t>%s</w:t></w:r></w:p>'%p for p in sys.argv[2:])\n"
+            "x='<w:document xmlns:w=\"%s\"><w:body>%s</w:body></w:document>'%(W,b)\n"
+            "z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr('word/document.xml',x); z.close()\n");
+        QStringList args{"-c", code, path};
+        args << paras;
+        QProcess::execute(qEnvironmentVariable("TTS_PYTHON", "python"), args);
+        return path;
+    }
+    void importsWordDocumentThroughWorker() {
+        auto *ed = get<QPlainTextEdit>("textEditor");
+        ed->setPlainText("old text");
+        QTemporaryDir d;
+        const QString docx = makeDocx(d.filePath("story.docx"), {"First paragraph.", "Second paragraph."});
+        QVERIFY(QFileInfo::exists(docx));
+        QVERIFY(w->importFile(docx));                                   // started; the reading happens in the worker
+        QTRY_COMPARE_WITH_TIMEOUT(ed->toPlainText(), QString("First paragraph.\n\nSecond paragraph."), 20000);
+        QVERIFY(get<QLabel>("statusLabel")->text().contains("DOCX"));
+        QVERIFY(get<QPushButton>("importButton")->isEnabled());         // import finished: controls are back
+        QCOMPARE(w->state(), MainWindow::State::Idle);
+        // a damaged document reports why and leaves the text alone
+        QFile bad(d.filePath("broken.docx"));
+        QVERIFY(bad.open(QIODevice::WriteOnly));
+        bad.write("not a zip at all");
+        bad.close();
+        QVERIFY(w->importFile(bad.fileName()));
+        QTRY_VERIFY_WITH_TIMEOUT(get<QLabel>("statusLabel")->text().contains("not a valid .docx"), 20000);
+        QCOMPARE(ed->toPlainText(), QString("First paragraph.\n\nSecond paragraph."));
+        ed->clear();
+    }
+    void droppedPdfDocxEpubAreAccepted() {
+        QTemporaryDir d;
+        for (const char *ext : {"pdf", "docx", "epub"}) {
+            QFile f(d.filePath(QString("a.") + ext));
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.close();
+            QMimeData mime;
+            mime.setUrls({QUrl::fromLocalFile(f.fileName())});
+            QDragEnterEvent enter(QPoint(200, 200), Qt::CopyAction, &mime, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(w, &enter);
+            QVERIFY2(enter.isAccepted(), ext);
+        }
+        QMimeData exe;
+        exe.setUrls({QUrl::fromLocalFile(d.filePath("a.exe"))});
+        QDragEnterEvent enter(QPoint(200, 200), Qt::CopyAction, &exe, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(w, &enter);
+        QVERIFY(!enter.isAccepted());
+    }
+    void nothingToReadAndTooLongAreRejectedWithAReason() {
+        auto *ed = get<QPlainTextEdit>("textEditor");
+        auto *status = get<QLabel>("statusLabel");
+        ed->setPlainText("!!! ... ???");
+        QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);
+        QCOMPARE(w->state(), MainWindow::State::Idle);
+        QVERIFY2(status->text().contains("nothing to read aloud"), qPrintable(status->text()));
+        ed->setPlainText(QString(20000 + 25, 'a'));
+        QVERIFY(get<QLabel>("qaNote")->text().contains("Too long by 25"));
+        QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);
+        QCOMPARE(w->state(), MainWindow::State::Idle);
+        QVERIFY2(status->text().contains("too long") && status->text().contains("Remove about 25"), qPrintable(status->text()));
+        ed->clear();
+        QVERIFY(get<QLabel>("qaNote")->text().isEmpty());
+    }
+    void countsShowReadingTime() {
+        QCOMPARE(MainWindow::formatDuration(7), QString("7 s"));
+        QCOMPARE(MainWindow::formatDuration(187), QString("3:07"));
+        QCOMPARE(MainWindow::formatDuration(3729), QString("1:02:09"));
+        QCOMPARE(MainWindow::estimateSpeechSeconds(150, 1.0), 60);
+        QCOMPARE(MainWindow::estimateSpeechSeconds(150, 2.0), 30);
+        auto *ed = get<QPlainTextEdit>("textEditor");
+        ed->setPlainText(QString("word ").repeated(300));
+        QString line;
+        for (auto *l : w->findChildren<QLabel *>()) if (l->text().contains(" words")) line = l->text();
+        QVERIFY2(line.contains("300 words") && line.contains("about 2:00 of audio"), qPrintable(line));
+        ed->clear();
+    }
+    void choicesAreRememberedBetweenRuns() {
+        auto *speed = get<QComboBox>("speedSpin");
+        auto *voice = get<QComboBox>("voiceCombo");
+        const int vi = voice->findData("deep");
+        QVERIFY(vi >= 0);
+        voice->setCurrentIndex(vi);
+        speed->setEditText("1.25");
+        get<QPlainTextEdit>("textEditor")->setPlainText("Remember me.");
+        QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);    // generating stores the choices
+        waitState(MainWindow::State::Idle);
+        MainWindow again;
+        again.show();
+        QTRY_COMPARE_WITH_TIMEOUT(again.state(), MainWindow::State::Idle, 30000);
+        QTRY_COMPARE_WITH_TIMEOUT(again.findChild<QComboBox *>("voiceCombo")->currentData().toString(), QString("deep"), 5000);
+        QCOMPARE(again.findChild<QComboBox *>("speedSpin")->currentText(), QString("1.25"));
+        again.close();
+        speed->setEditText("1.00");
+        voice->setCurrentIndex(voice->findData("original"));
+        get<QPlainTextEdit>("textEditor")->clear();
+    }
+    void unsavedAudioAsksBeforeClosing() {
+        MainWindow c;
+        c.setPreCheckEnabled(false);
+        c.show();
+        QTRY_COMPARE_WITH_TIMEOUT(c.state(), MainWindow::State::Idle, 30000);
+        auto *be = c.findChild<QComboBox *>("backendCombo");
+        be->setCurrentIndex(be->findData("mock"));
+        QVERIFY(!c.hasUnsavedAudio());                                    // nothing generated yet
+        c.findChild<QPlainTextEdit *>("textEditor")->setPlainText("Please keep this audio.");
+        QTest::mouseClick(c.findChild<QPushButton *>("primary"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(c.state() == MainWindow::State::Idle && c.hasUnsavedAudio(), 30000);
+        c.setConfirmClose(true);
+        auto press = [](const QString &label) {                           // answers the modal dialog the close raises
+            QTimer::singleShot(300, [label] {
+                QWidget *m = QApplication::activeModalWidget();
+                if (!m) return;
+                for (auto *b : m->findChildren<QPushButton *>()) if (b->text() == label) { b->click(); return; }
+            });
+        };
+        press("Cancel");
+        QVERIFY(!c.close());                                              // "go back": the window stays open
+        QVERIFY(c.isVisible());
+        QTemporaryDir d;                                                  // saving (any way) means there is nothing to lose
+        c.exportAudio(d.filePath("kept.wav"), "wav");
+        QTRY_VERIFY_WITH_TIMEOUT(c.state() == MainWindow::State::Idle, 20000);
+        QVERIFY(!c.hasUnsavedAudio());
+        QVERIFY(c.close());                                               // no prompt any more
+        MainWindow e;                                                     // and "Discard" closes without saving
+        e.setPreCheckEnabled(false);
+        e.show();
+        QTRY_COMPARE_WITH_TIMEOUT(e.state(), MainWindow::State::Idle, 30000);
+        e.findChild<QComboBox *>("backendCombo")->setCurrentIndex(e.findChild<QComboBox *>("backendCombo")->findData("mock"));
+        e.findChild<QPlainTextEdit *>("textEditor")->setPlainText("Throw this away.");
+        QTest::mouseClick(e.findChild<QPushButton *>("primary"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(e.state() == MainWindow::State::Idle && e.hasUnsavedAudio(), 30000);
+        e.setConfirmClose(true);
+        press("Discard");
+        QVERIFY(e.close());
+    }
+    void longGenerationShowsTimeLeftAndCanBeCancelled() {
+        qputenv("SPEECH_ENGINE_MOCK_DELAY", "0.35");
+        MainWindow slow;
+        slow.setPreCheckEnabled(false);
+        slow.show();
+        QTRY_COMPARE_WITH_TIMEOUT(slow.state(), MainWindow::State::Idle, 30000);
+        auto *be = slow.findChild<QComboBox *>("backendCombo");
+        be->setCurrentIndex(be->findData("mock"));
+        slow.findChild<QPlainTextEdit *>("textEditor")->setPlainText(longText(40));
+        QTest::mouseClick(slow.findChild<QPushButton *>("primary"), Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(slow.findChild<QLabel *>("statusLabel")->text().contains("left"), 20000);
+        QVERIFY(slow.findChild<QLabel *>("statusLabel")->text().contains("chunk"));
+        QTest::mouseClick(slow.findChild<QPushButton *>("cancelButton"), Qt::LeftButton);
+        QTRY_COMPARE_WITH_TIMEOUT(slow.state(), MainWindow::State::Idle, 10000);
+        QVERIFY(!slow.hasUnsavedAudio());                                  // a cancelled job leaves nothing to lose
+        slow.close();
+        qputenv("SPEECH_ENGINE_MOCK_DELAY", "0");
+    }
+    void liveAudioPlaysWhatIsAppended() {
+        if (!LiveAudio::available()) QSKIP("no audio output device");
+        LiveAudio live;
+        QSignalSpy started(&live, &LiveAudio::playbackStarted);
+        if (!live.begin(24000)) QSKIP("device cannot play 24 kHz mono");
+        QVERIFY(live.active());
+        QByteArray tone(24000 * 2 * 2, '\0');                              // 2 s of a quiet 440 Hz tone
+        auto *s = reinterpret_cast<qint16 *>(tone.data());
+        for (int i = 0; i < 24000 * 2; ++i) s[i] = qint16(800 * std::sin(2 * M_PI * 440.0 * i / 24000.0));
+        live.append(tone.left(24000));                                     // under the 0.35 s pre-roll: waits
+        QTest::qWait(150);
+        live.append(tone.mid(24000));
+        QCOMPARE(live.queuedMs(), qint64(2000));
+        QTRY_VERIFY_WITH_TIMEOUT(started.count() == 1, 3000);
+        QTRY_VERIFY_WITH_TIMEOUT(live.playedMs() > 300, 3000);
+        live.pause();
+        const qint64 at = live.playedMs();
+        QTest::qWait(300);
+        QVERIFY(live.playedMs() - at < 120);                               // paused: the position does not run on
+        live.resume();
+        QTRY_VERIFY_WITH_TIMEOUT(live.playedMs() > at + 200, 3000);
+        live.stop();
+        QVERIFY(!live.active());
+    }
+
     void errorFromBackendIsShown() {
         get<QPlainTextEdit>("textEditor")->setPlainText("This will fail [[fail]]");
         QTest::mouseClick(get<QPushButton>("primary"), Qt::LeftButton);
@@ -257,6 +444,8 @@ private slots:
 
 int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
+    qputenv("SPEECH_ENGINE_MAX_TEXT_CHARS", "20000");   // the worker reports this limit; keeps the too-long test fast
+    qputenv("TTS_NO_CLOSE_PROMPT", "1");     // windows closed by tests must not wait for a person
     QApplication app(argc, argv);
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QTemporaryDir cfg;

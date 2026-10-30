@@ -15,6 +15,7 @@
 #include "ui/Frameless.h"
 #include "ui/GlStage.h"
 #include "ui/Icons.h"
+#include "ui/LiveAudio.h"
 #include "ui/Indicators.h"
 #include "ui/Menus.h"
 #include "ui/Motion.h"
@@ -49,6 +50,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QLocale>
 #include <QLineEdit>
 #include <QMediaDevices>
 #include <QMimeData>
@@ -140,7 +142,14 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
     m_previewPlayer = new QMediaPlayer(this);
     m_previewOut = new QAudioOutput(this);
     m_previewPlayer->setAudioOutput(m_previewOut);
+    m_live = new LiveAudio(this);
     buildUi();
+    connect(m_live, &LiveAudio::stateChanged, this, &MainWindow::updateLiveUi);
+    connect(m_live, &LiveAudio::playbackStarted, this, [this] {
+        m_player->pause();
+        stopPreview();
+        setStatus("Playing while the rest is generated…");
+    });
 
     auto *mediaDevices = new QMediaDevices(this);
     connect(mediaDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
@@ -150,6 +159,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
 
     connect(m_client, &ProtocolClient::ready, this, &MainWindow::onReady);
     connect(m_client, &ProtocolClient::progress, this, &MainWindow::onProgress);
+    connect(m_client, &ProtocolClient::progressDetail, this, &MainWindow::onProgressDetail);
     connect(m_client, &ProtocolClient::finished, this, &MainWindow::onFinished);
     connect(m_client, &ProtocolClient::workerStopped, this, &MainWindow::onWorkerStopped);
     connect(m_client, &ProtocolClient::logLine, this, &MainWindow::log);
@@ -168,6 +178,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent), m_client(new Prot
         m_play->setText(playing ? "Pause" : "Play");
         m_play->setIcon(Icons::icon(playing ? "pause" : "play"));
         m_stop->setEnabled(st != QMediaPlayer::StoppedState);
+        updateLiveUi();                // an early-playback stream, if any, owns the Play/Stop buttons
         m_wave->setActive(playing);
         if (playing) {
             stopPreview();             // never two voices at once
@@ -465,6 +476,7 @@ void MainWindow::buildUi() {
     m_bitrate->setObjectName("bitrateCombo");
     for (int b : {128, 160, 192, 256, 320}) m_bitrate->addItem(QString("%1 kbps").arg(b), b);
     m_bitrate->setCurrentIndex(2);
+    if (const int bi = m_bitrate->findData(Config::settings().value("last/bitrate", 192).toInt()); bi >= 0) m_bitrate->setCurrentIndex(bi);
     m_saveMp3 = button("Save MP3", "save-mp3", "saveMp3Button");
     m_saveWav = button("Save WAV", "export-wav", "saveWavButton");
     m_saveMp3->setToolTip("Save as MP3 (uses the quality chosen next to it)");
@@ -543,13 +555,13 @@ void MainWindow::buildUi() {
         dv->setNotation(QDoubleValidator::StandardNotation);
         m_speed->lineEdit()->setValidator(dv);
     }
-    setSpeedValue(1.0);
+    setSpeedValue(Config::settings().value("last/speed", 1.0).toDouble());
     m_speedSlider = new QSlider(Qt::Horizontal);
     m_speedSlider->setObjectName("speedSlider");
     m_speedSlider->setRange(50, 200);
     m_speedSlider->setSingleStep(5);
     m_speedSlider->setPageStep(10);
-    m_speedSlider->setValue(100);
+    m_speedSlider->setValue(qRound(speedValue() * 100));
     m_speedSlider->setToolTip("Speaking speed (0.5x - 2.0x)");
     connect(m_speedSlider, &QSlider::valueChanged, this, [this](int v) {
         if (qRound(speedValue() * 100) != v) setSpeedValue(v / 100.0);
@@ -580,6 +592,7 @@ void MainWindow::buildUi() {
     m_style = new QLineEdit;
     m_style->setObjectName("styleEdit");
     m_style->setPlaceholderText("Optional style instruction (Google backend)");
+    m_style->setText(Config::settings().value("last/style").toString());
     m_preview = new PreviewButton;
     const int rowH = m_voice->sizeHint().height();
     m_preview->setFixedSize(rowH, rowH);
@@ -660,6 +673,15 @@ void MainWindow::buildUi() {
     m_precheck->setChecked(Config::settings().value("precheck", true).toBool());
     m_precheck->setToolTip("Analyses the text for names, numbers, acronyms and ambiguous words first; the text is never rewritten");
     gl->addWidget(m_precheck);
+    m_liveBox = new FancyCheckBox("Play while generating (long text)");
+    m_liveBox->setObjectName("liveBox");
+    m_liveBox->setChecked(Config::settings().value("last/live", true).toBool() && LiveAudio::available());
+    m_liveBox->setEnabled(LiveAudio::available());
+    m_liveBox->setToolTip(LiveAudio::available()
+        ? "Starts playing after the first sentences are ready instead of waiting for the whole text. "
+          "The finished audio is the same either way."
+        : "No audio output device was found.");
+    gl->addWidget(m_liveBox);
     m_stretch = new FancyCheckBox("Stretch drawn-out words (helloooo)");
     m_stretch->setObjectName("stretchBox");
     m_stretch->setChecked(Config::settings().value("stretch", true).toBool());
@@ -737,6 +759,7 @@ void MainWindow::buildUi() {
     connect(m_clear, &QPushButton::clicked, m_text, &QPlainTextEdit::clear);
     connect(m_checkText, &QPushButton::clicked, this, [this] { analyzeText(false); });
     connect(m_text, &QPlainTextEdit::textChanged, this, &MainWindow::updateCounts);
+    connect(m_speed->lineEdit(), &QLineEdit::textChanged, this, &MainWindow::updateCounts);   // the length estimate follows the speed
     connect(m_generate, &QPushButton::clicked, this, &MainWindow::onGenerateClicked);
     connect(m_precheck, &QCheckBox::toggled, this, [](bool on) { Config::settings().setValue("precheck", on); });
     connect(m_preview, &QToolButton::clicked, this, &MainWindow::onPreviewClicked);
@@ -964,8 +987,9 @@ void MainWindow::setState(State s) {
     const bool idle = s == State::Idle;
     const bool busy = s == State::Generating || s == State::Exporting || s == State::Rechecking || s == State::Repairing;
     const bool haveAudio = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
-    m_generate->setEnabled(idle && !m_analyzing);
-    m_checkText->setEnabled(idle && !m_analyzing);
+    m_generate->setEnabled(idle && !busyAux());
+    m_checkText->setEnabled(idle && !busyAux());
+    m_import->setEnabled(!m_importing);
     m_backend->setEnabled(idle);
     m_voice->setEnabled(idle);
     m_lang->setEnabled(idle);
@@ -977,17 +1001,18 @@ void MainWindow::setState(State s) {
     m_saveMp3->setEnabled(idle && haveAudio);
     m_saveWav->setEnabled(idle && haveAudio);
     m_bitrate->setEnabled(idle && haveAudio);
-    m_play->setEnabled(haveAudio && s != State::Starting);
+    m_play->setEnabled((haveAudio && s != State::Starting) || (m_live && m_live->active()));
     m_seek->setEnabled(haveAudio);
-    if (busy && !m_cancel->isVisible()) {
+    const bool working = busy || m_importing;
+    if (working && !m_cancel->isVisible()) {
         m_cancel->show();
         Fx::fadeIn(m_cancel, 160);
-    } else if (!busy) {
+    } else if (!working) {
         m_cancel->hide();
     }
     // The spinner shows only while the backend is actually working on something.
-    m_busy->setVisible(busy);
-    m_shell->setBusyCursor(busy);
+    m_busy->setVisible(working);
+    m_shell->setBusyCursor(working);
     if (!busy) m_progress->resetNow();
     m_qa->setBusy(s == State::Rechecking || s == State::Repairing,
                   s == State::Rechecking ? "Transcribing and comparing the speech…" : "Regenerating and rechecking the affected chunks…");
@@ -1032,7 +1057,7 @@ void MainWindow::updatePreviewUi() {
     else if (m_previewPlayer->playbackState() == QMediaPlayer::PlayingState) mode = PreviewButton::Mode::Speaking;
     m_preview->setMode(mode);
     // Usable when idle (start) or while a preview is running (cancel/stop).
-    m_preview->setEnabled((m_state == State::Idle && m_voice->count() > 0 && !m_analyzing) || mode != PreviewButton::Mode::Idle);
+    m_preview->setEnabled((m_state == State::Idle && m_voice->count() > 0 && !busyAux()) || mode != PreviewButton::Mode::Idle);
 }
 
 QProcessEnvironment MainWindow::workerEnv() const {
@@ -1118,6 +1143,10 @@ void MainWindow::onWorkerStopped(const QString &reason) {
     m_jobId.clear();
     m_job = Job::None;
     m_analyzing = false;
+    m_importing = false;
+    m_importId.clear();
+    ++m_importSeq;
+    stopLive();
     setStatus(reason, true);
     setState(State::Unavailable);
 }
@@ -1125,11 +1154,14 @@ void MainWindow::onWorkerStopped(const QString &reason) {
 void MainWindow::backendChanged() {
     const QString b = m_backend->currentData().toString();
     const QJsonObject caps = m_caps.value("backends").toObject().value(b).toObject();
+    const QString wantLang = m_langRestored ? m_lang->currentData().toString() : Config::settings().value("last/language").toString();
     m_lang->clear();
     const QJsonObject langs = caps.value("languages").toObject();
     for (auto it = langs.begin(); it != langs.end(); ++it) m_lang->addItem(it.value().toString(), it.key());
     const int en = m_lang->findData("en-us");   // JSON objects are key-sorted; never default to an arbitrary language
     if (en >= 0) m_lang->setCurrentIndex(en);
+    if (const int li = m_lang->findData(wantLang); li >= 0) m_lang->setCurrentIndex(li);
+    if (m_lang->count() > 0) m_langRestored = true;
     const bool hasLang = m_lang->count() > 0;
     const bool hasSpeed = caps.value("speed").toBool();
     const bool hasStyle = caps.value("style").toBool();
@@ -1209,7 +1241,8 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
             return;
         }
         m_health = r;
-        const QString previous = m_backend->count() ? m_backend->currentData().toString() : QString();
+        const QString previous = m_backend->count() ? m_backend->currentData().toString()
+                                                    : Config::settings().value("last/backend").toString();
         m_backend->blockSignals(true);
         m_backend->clear();
         QStringList problems;
@@ -1245,9 +1278,17 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         m_capsId.clear();
         if (status == "success") {
             m_caps = r;
+            m_maxChars = r.value("max_text_chars").toInt(m_maxChars);
+            const bool firstCaps = m_voice->count() == 0;      // later refreshes keep what the user picked meanwhile
+            const QString wantEmotion = firstCaps ? Config::settings().value("last/emotion", "neutral").toString()
+                                                  : m_emotion->currentData().toString();
+            const QString wantVoice = firstCaps ? Config::settings().value("last/voice", "original").toString()
+                                                : m_voice->currentData().toString();
             if (const auto emo = r.value("emotions").toArray(); !emo.isEmpty()) {
                 m_emotion->clear();
                 for (const auto &e : emo) m_emotion->addItem(e.toObject().value("label").toString(), e.toObject().value("name").toString());
+                if (const int ei = m_emotion->findData(wantEmotion); ei >= 0) m_emotion->setCurrentIndex(ei);
+                if (firstCaps) m_intensity->setValue(Config::settings().value("last/intensity", 70).toInt());
             }
             m_voice->clear();
             m_voiceSamples.clear();
@@ -1294,11 +1335,13 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
                     m_voiceInfo.insert(name, who.isEmpty() ? tag : who + "  ·  " + tag);
                 }
             }
-            const int i = m_voice->findData("original");
+            int i = m_voice->findData(wantVoice);
+            if (i < 0) i = m_voice->findData("original");
             if (i >= 0) m_voice->setCurrentIndex(i);
             m_voiceInfoLabel->setText(m_voiceInfo.value(m_voice->currentData().toString()));
             if (m_backend->count() > 0) backendChanged();
             updatePreviewUi();
+            updateCounts();
         }
         return;
     }
@@ -1335,6 +1378,7 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
                 m_outLabel->setText("Saved: " + QDir::toNativeSeparators(out) + "  ·  speech check: " +
                                     labels[int(m_qa->status())]);
                 m_success->play();
+                m_audioSaved = true;
             }
             break;
         }
@@ -1377,9 +1421,12 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
                 m_qa->reset();
             }
             loadAudio(r.value("output_path").toString());
-            setStatus(QString("Generated %1 s of audio with %2 / %3.")
-                          .arg(r.value("duration_s").toDouble(), 0, 'f', 1, ' ')
-                          .arg(r.value("backend").toString(), r.value("voice").toString()));
+            m_audioSaved = false;
+            finishLiveHandoff();
+            setStatus(QString("Generated %1 of audio with %2 / %3 in %4.")
+                          .arg(formatDuration(qRound(r.value("duration_s").toDouble())),
+                               r.value("backend").toString(), r.value("voice").toString(),
+                               formatDuration(qRound(m_jobClock.elapsed() / 1000.0))));
             break;
         }
     } else if (tempExp) {                              // temp MP3 failed: fall back to WAV so dragging still works
@@ -1388,8 +1435,10 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
         m_dragHandle->setFormat("wav");
         setStatus("Could not prepare the MP3 for dragging; using WAV instead. " + message, true);
     } else if (status == "cancelled") {
+        stopLive();
         setStatus("Cancelled.");
     } else {
+        stopLive();
         setStatus((code.isEmpty() ? "" : code + ": ") + message, true);
     }
     m_jobIsTest = false;
@@ -1399,18 +1448,130 @@ void MainWindow::onFinished(const QString &id, const QString &status, const QJso
 }
 
 void MainWindow::onProgress(const QString &id, int pct, const QString &msg) {
+    if (id == m_importId) {
+        m_status->setText("Reading the file… " + msg);
+        return;
+    }
     if (id != m_jobId) return;
     if (pct > 0) m_progress->setTarget(pct);   // 0 = "starting": the spinner shows activity, no invented percentage
     const QString verb = m_state == State::Exporting ? "Exporting… " : m_state == State::Rechecking ? "Checking… "
                          : m_state == State::Repairing ? "Repairing… " : "Generating… ";
-    m_status->setText(verb + msg);
+    QString text = verb + msg;
+    // Long texts: say how long is left. The worker reports 0-95 % while it works through the chunks, so the time per
+    // percent measured so far predicts the rest; it is only shown once there is enough evidence to be useful.
+    if (m_state == State::Generating && !m_jobIsTest && m_jobClock.isValid() && pct >= 4 && pct < 95) {
+        const double elapsed = m_jobClock.elapsed() / 1000.0;
+        if (elapsed >= 4.0) {
+            const int left = qRound(elapsed * (95.0 - pct) / pct);
+            text += left < 5 ? QString(" · almost done") : QString(" · about %1 left").arg(formatDuration(left));
+        }
+    }
+    m_status->setText(text);
+}
+
+// Reads the audio of a finished chunk (16-bit mono WAV written by the worker) for live playback.
+static bool readWavPcm(const QString &path, int *rate, QByteArray *pcm) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return false;
+    const QByteArray b = f.readAll();
+    if (b.size() < 44 || b.mid(0, 4) != "RIFF" || b.mid(8, 4) != "WAVE") return false;
+    auto le16 = [&](int o) { return quint16(quint8(b[o]) | (quint8(b[o + 1]) << 8)); };
+    auto le32 = [&](int o) { return quint32(le16(o)) | (quint32(le16(o + 2)) << 16); };
+    int pos = 12, ch = 0, bits = 0;
+    *rate = 0;
+    while (pos + 8 <= b.size()) {
+        const QByteArray id = b.mid(pos, 4);
+        const qint64 len = le32(pos + 4);
+        if (id == "fmt " && pos + 24 <= b.size()) {
+            ch = le16(pos + 10);
+            *rate = int(le32(pos + 12));
+            bits = le16(pos + 22);
+        } else if (id == "data") {
+            if (ch != 1 || bits != 16 || *rate <= 0) return false;
+            *pcm = b.mid(pos + 8, int(qMin<qint64>(len, b.size() - pos - 8)) & ~1);
+            return true;
+        }
+        pos += 8 + int(len + (len & 1));
+    }
+    return false;
+}
+
+// A finished chunk for live playback: its WAV file, the pause that follows it and the sample rate.
+void MainWindow::onProgressDetail(const QString &id, const QJsonObject &msg) {
+    if (id != m_jobId || m_jobIsTest || m_liveFailed || !m_liveBox->isChecked()) return;
+    if (msg.value("chunk_total").toInt() < 2) return;      // one chunk: it is ready as soon as the job is, nothing to gain
+    int rate = 0;
+    QByteArray pcm;
+    if (!readWavPcm(msg.value("chunk_path").toString(), &rate, &pcm)) {
+        m_liveFailed = true;
+        stopLive();
+        log("[live] could not read a finished chunk; playback will start when generation finishes");
+        return;
+    }
+    if (!m_live->active() && !m_live->begin(rate)) {
+        m_liveFailed = true;             // no usable audio device: quietly fall back to play-after-generating
+        log("[live] audio output unavailable; playback will start when generation finishes");
+        return;
+    }
+    if (rate != m_live->sampleRate()) {  // the worker keeps one rate per session; never mix rates
+        m_liveFailed = true;
+        stopLive();
+        return;
+    }
+    m_live->append(pcm);
+    m_live->appendSilenceMs(msg.value("pause_ms").toInt());
+}
+
+void MainWindow::stopLive() {
+    if (m_live && m_live->active()) m_live->stop();
+    updateLiveUi();
+}
+
+void MainWindow::updateLiveUi() {
+    if (!m_play) return;
+    const bool live = m_live && m_live->active();
+    if (live) {
+        const bool playing = !m_live->paused();
+        m_play->setText(playing ? "Pause" : "Play");
+        m_play->setIcon(Icons::icon(playing ? "pause" : "play"));
+        m_play->setEnabled(true);
+        m_stop->setEnabled(true);
+    } else {
+        const bool playingMain = m_player->playbackState() == QMediaPlayer::PlayingState;
+        m_play->setText(playingMain ? "Pause" : "Play");
+        m_play->setIcon(Icons::icon(playingMain ? "pause" : "play"));
+        const bool haveAudio = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
+        m_play->setEnabled(haveAudio && m_state != State::Starting);
+        m_stop->setEnabled(m_player->playbackState() != QMediaPlayer::StoppedState);
+    }
+    updateGlActivity();
+}
+
+// Generation finished while the live stream was still playing: carry on from the same moment in the finished file, so
+// the sound continues and the seek bar, waveform and Save buttons take over.
+void MainWindow::finishLiveHandoff() {
+    if (!m_live || !m_live->active()) return;
+    const qint64 at = m_live->playedMs();
+    const bool unplayed = m_live->queuedMs() - at > 150;    // everything already heard: leave the finished file at the start
+    const bool wasPlaying = !m_live->paused();
+    m_live->stop();
+    if (!unplayed) return;
+    auto *conn = new QMetaObject::Connection;
+    *conn = connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this, conn, at, wasPlaying](QMediaPlayer::MediaStatus st) {
+        if (st != QMediaPlayer::LoadedMedia && st != QMediaPlayer::BufferedMedia) return;
+        disconnect(*conn);
+        delete conn;
+        m_levels.clear();
+        m_player->setPosition(at);
+        if (wasPlaying) { useDefaultOutput(m_audioOut); m_player->play(); }
+    });
 }
 
 // ---------------------------------------------------------------- actions
 void MainWindow::onGenerateClicked() {
-    if (m_state != State::Idle || !m_jobId.isEmpty() || m_analyzing) return;
-    if (m_text->toPlainText().trimmed().isEmpty()) {
-        setStatus("Enter or import some text first.", true);
+    if (m_state != State::Idle || !m_jobId.isEmpty() || busyAux()) return;
+    if (QString why; textProblem(&why)) {
+        setStatus(why, true);
         return;
     }
     if (m_precheck->isChecked() && m_backend->count() > 0) analyzeText(true);
@@ -1418,10 +1579,10 @@ void MainWindow::onGenerateClicked() {
 }
 
 void MainWindow::analyzeText(bool thenGenerate) {
-    if (m_state != State::Idle || m_analyzing) return;
+    if (m_state != State::Idle || busyAux()) return;
     const QString text = m_text->toPlainText();
-    if (text.trimmed().isEmpty()) {
-        setStatus("Enter or import some text first.", true);
+    if (QString why; textProblem(&why)) {
+        setStatus(why, true);
         return;
     }
     m_analyzing = true;
@@ -1466,10 +1627,13 @@ void MainWindow::showReview(const QJsonObject &analysis, bool thenGenerate) {
 void MainWindow::generate(bool testVoice) {
     if (m_state != State::Idle || !m_jobId.isEmpty()) return;   // no duplicate requests
     QString text = testVoice ? QStringLiteral("Hello. This is a short test of the selected voice.") : m_text->toPlainText();
-    if (text.trimmed().isEmpty()) {
-        setStatus("Enter or import some text first.", true);
+    if (QString why; !testVoice && textProblem(&why)) {
+        setStatus(why, true);
         return;
     }
+    if (!testVoice) saveUiSettings();
+    stopLive();
+    m_liveFailed = false;
     releasePreviewFile();    // a new job always supersedes any preview
     QString out;
     QJsonObject extra;
@@ -1504,8 +1668,10 @@ void MainWindow::generate(bool testVoice) {
     }
     p["stretch"] = m_stretch->isChecked() ? m_stretchAmount->value() / 100.0 : 0.0;
     if (m_style->isVisible() && !m_style->text().trimmed().isEmpty()) p["style"] = m_style->text().trimmed();
+    if (!testVoice && m_liveBox->isChecked() && LiveAudio::available()) p["stream"] = true;   // chunk events for live playback
     m_jobIsTest = testVoice;
     m_job = testVoice ? Job::Preview : Job::Synth;
+    m_jobClock.start();
     m_jobId = m_client->request("synthesize", p);
     m_progress->resetNow();
     setState(State::Generating);
@@ -1569,7 +1735,13 @@ void MainWindow::loadPreview(const QString &path) {
 }
 
 void MainWindow::cancelJob() {
+    if (m_importing && !m_importId.isEmpty()) {
+        m_client->cancel(m_importId);
+        setStatus("Cancelling the import…");
+        return;
+    }
     if (m_jobId.isEmpty()) return;
+    stopLive();                                   // silence at once; the worker needs a moment to stop
     m_client->cancel(m_jobId);
     setStatus("Cancelling…");
 }
@@ -1619,12 +1791,21 @@ void MainWindow::saveWav() {
 }
 
 void MainWindow::togglePlay() {
+    if (m_live && m_live->active()) {
+        if (m_live->paused()) m_live->resume(); else m_live->pause();
+        return;
+    }
     if (m_audioPath.isEmpty()) return;
     if (m_player->playbackState() == QMediaPlayer::PlayingState) m_player->pause();
     else { useDefaultOutput(m_audioOut); m_player->play(); }
 }
 
 void MainWindow::stopPlay() {
+    if (m_live && m_live->active()) {          // only the early playback stops; the generation carries on
+        stopLive();
+        if (m_state == State::Generating) setStatus("Stopped the early playback. Generation continues.");
+        return;
+    }
     m_player->stop();
 }
 
@@ -1708,6 +1889,7 @@ void MainWindow::acceptRepair() {
         if (st != "success") { setStatus("Could not accept the repair: " + r.value("message").toString(), true); return; }
         m_candidatePath.clear();
         m_acceptedPath = r.value("accepted_path").toString();
+        m_audioSaved = false;
         loadAudio(m_acceptedPath);
         if (!r.value("summary").isNull()) m_qa->setSummary(r.value("summary").toObject());
         m_qa->setCandidateAvailable(false);
@@ -1839,13 +2021,19 @@ void MainWindow::tickWave() {
 
 void MainWindow::importText() {
     const QString dir = Config::settings().value("lastDir", QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)).toString();
-    const QString f = QFileDialog::getOpenFileName(this, "Import text", dir, "Text files (*.txt);;All files (*)");
+    const QString f = QFileDialog::getOpenFileName(this, "Import text", dir,
+        "Documents (*.txt *.md *.markdown *.pdf *.docx *.epub);;Text files (*.txt *.md *.markdown);;PDF (*.pdf);;Word (*.docx);;EPUB books (*.epub);;All files (*)");
     if (f.isEmpty()) return;
     Config::settings().setValue("lastDir", QFileInfo(f).absolutePath());
     importFile(f);
 }
 
 bool MainWindow::importFile(const QString &f) {
+    const QString ext = QFileInfo(f).suffix().toLower();
+    if (ext == "pdf" || ext == "docx" || ext == "epub") {
+        importDocument(f);
+        return true;
+    }
     QFile file(f);
     if (!file.open(QIODevice::ReadOnly)) {
         setStatus("Cannot read " + f + ": " + file.errorString(), true);
@@ -1864,9 +2052,52 @@ bool MainWindow::importFile(const QString &f) {
     return true;
 }
 
+// PDF / DOCX / EPUB are unpacked by the worker (speech_engine/doc_extract.py); the editor is only touched on success.
+void MainWindow::importDocument(const QString &f) {
+    if (m_importing) {
+        setStatus("Another file is still being read.", true);
+        return;
+    }
+    if (!m_client->isRunning() || !m_client->isReady() || m_state != State::Idle) {
+        setStatus(m_state == State::Idle || m_state == State::Unavailable || m_state == State::Starting
+                      ? "The speech engine is not ready, so this file cannot be read yet."
+                      : "Wait until the current job finishes, then import the file.", true);
+        return;
+    }
+    m_importing = true;
+    const int seq = ++m_importSeq;
+    setState(m_state);
+    setStatus("Reading " + QFileInfo(f).fileName() + "…");
+    m_importId = m_client->call("extract_text", {{"path", f}}, this, [this, seq, f](const QString &st, const QJsonObject &r) {
+        if (seq != m_importSeq) return;                    // superseded (worker restarted)
+        m_importing = false;
+        m_importId.clear();
+        setState(m_state);
+        if (st == "cancelled") {
+            setStatus("Import cancelled; the text was not changed.");
+            return;
+        }
+        if (st != "success") {
+            UiSounds::instance().play(UiSounds::Sound::Error);
+            setStatus(r.value("message").toString().isEmpty() ? "The file could not be read." : r.value("message").toString(), true);
+            return;
+        }
+        m_text->setPlainText(r.value("text").toString());
+        const QString fmt = r.value("format").toString().toUpper();
+        const QString detail = r.contains("pages") ? QString(", %1 page(s)").arg(r.value("pages").toInt())
+                               : r.contains("chapters") ? QString(", %1 chapter(s)").arg(r.value("chapters").toInt()) : QString();
+        UiSounds::instance().play(UiSounds::Sound::Drop);
+        if (r.value("truncated").toBool())
+            setStatus(QString("Imported the first %1 characters of %2; the rest was cut because it is over the limit.")
+                          .arg(QLocale().toString(r.value("chars").toInt()), QDir::toNativeSeparators(f)), true);
+        else
+            setStatus(QString("Imported %1 (%2%3)").arg(QDir::toNativeSeparators(f), fmt, detail));
+    }, 10 * 60 * 1000);
+}
+
 // ---------------------------------------------------------------- drag & drop
 QStringList MainWindow::droppedTextFiles(const QMimeData *m) const {
-    static const QStringList ok{"txt", "md", "markdown", "text", "log", "rtf_txt"};
+    static const QStringList ok{"txt", "md", "markdown", "text", "log", "pdf", "docx", "epub"};
     QStringList out;
     if (m && m->hasUrls())
         for (const QUrl &u : m->urls())
@@ -1886,7 +2117,7 @@ void MainWindow::dragHint(const QMimeData *m) {
     else if (ok)
         m_drop->showHint("Drop to add this text", "It will be appended to the editor", true);
     else
-        m_drop->showHint("Can't use this", "Drop a text file (.txt, .md) or some text", false);
+        m_drop->showHint("Can't use this", "Drop a .txt, .md, .pdf, .docx or .epub file, or some text", false);
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *e) {
@@ -1916,13 +2147,15 @@ void MainWindow::handleDrop(const QMimeData *m, const QPointF &at) {
     m_drop->hideHint();
     if (!dragAcceptable(m)) {
         UiSounds::instance().play(UiSounds::Sound::Error);
-        setStatus("Only text files (.txt, .md) or plain text can be dropped here.", true);
+        setStatus("Only .txt, .md, .pdf, .docx or .epub files, or plain text, can be dropped here.", true);
         return;
     }
     const QStringList files = droppedTextFiles(m);
     if (!files.isEmpty()) {
-        if (importFile(files.first())) UiSounds::instance().play(UiSounds::Sound::Drop);
-        else UiSounds::instance().play(UiSounds::Sound::Error);
+        const QString ext = QFileInfo(files.first()).suffix().toLower();
+        const bool started = importFile(files.first());
+        if (!started) UiSounds::instance().play(UiSounds::Sound::Error);
+        else if (ext != "pdf" && ext != "docx" && ext != "epub") UiSounds::instance().play(UiSounds::Sound::Drop);
         if (files.size() > 1) setStatus(m_status->text() + QString("  (only the first of %1 files was imported)").arg(files.size()));
         return;
     }
@@ -2002,16 +2235,78 @@ void MainWindow::purgeTempAudio(int olderThanDays, int *removed, qint64 *bytes) 
     if (bytes) *bytes = b;
 }
 
+QString MainWindow::formatDuration(qint64 sec) {
+    if (sec < 60) return QString("%1 s").arg(qMax<qint64>(sec, 0));
+    if (sec < 3600) return QString("%1:%2").arg(sec / 60).arg(sec % 60, 2, 10, QChar('0'));
+    return QString("%1:%2:%3").arg(sec / 3600).arg(sec % 3600 / 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'));
+}
+
+// Natural narration is about 150 words a minute at normal speed; the speed setting scales it.
+int MainWindow::estimateSpeechSeconds(int words, double speed) {
+    return int(qRound(words * 60.0 / (150.0 * qBound(0.5, speed, 2.0))));
+}
+
+// Empty, nothing to pronounce, or longer than the worker accepts. The text is never changed.
+bool MainWindow::textProblem(QString *message) const {
+    const QString t = m_text->toPlainText();
+    QString why;
+    if (t.trimmed().isEmpty()) {
+        why = "Enter or import some text first.";
+    } else if (t.size() > m_maxChars) {
+        why = QString("The text is too long: %1 characters, and the limit is %2. Remove about %3 characters or split it into parts.")
+                  .arg(QLocale().toString(t.size()), QLocale().toString(m_maxChars), QLocale().toString(t.size() - m_maxChars));
+    } else {
+        bool speakable = false;
+        for (const QChar c : t)
+            if (c.isLetterOrNumber()) { speakable = true; break; }
+        if (!speakable) why = "There is nothing to read aloud in this text (it has no letters or numbers).";
+    }
+    if (message) *message = why;
+    return !why.isEmpty();
+}
+
 void MainWindow::updateCounts() {
     const QString t = m_text->toPlainText();
-    const int words = t.isEmpty() ? 0 : t.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).size();
-    m_counts->setText(QString("%1 characters · %2 words").arg(t.size()).arg(words));
-    m_textBadge->clear();
+    int words = 0;
+    bool in = false;
+    for (const QChar c : t) {                      // one pass, no allocations: cheap even for a whole book
+        const bool sp = c.isSpace();
+        if (!sp && !in) ++words;
+        in = !sp;
+    }
+    m_wordCount = words;
+    QString line = QString("%1 characters · %2 words").arg(QLocale().toString(t.size()), QLocale().toString(words));
+    if (words > 0) line += QString(" · about %1 of audio").arg(formatDuration(estimateSpeechSeconds(words, speedValue())));
+    m_counts->setText(line);
+    m_counts->setToolTip("Characters and words in the text, and roughly how long the speech will be at the chosen speed");
+    const bool tooLong = t.size() > m_maxChars;
+    m_textBadge->setText(tooLong ? QString("Too long by %1 characters").arg(QLocale().toString(t.size() - m_maxChars)) : QString());
+    Fx::setProp(m_textBadge, "state", tooLong ? "error" : "");
     const bool empty = t.isEmpty();
     if (m_inputEmpty->isHidden() == empty) {
         m_inputEmpty->setVisible(empty);
         if (empty) Fx::fadeIn(m_inputEmpty, 200);
     }
+}
+
+// What the user chose last time (voice, backend, language, speed, feeling, style, MP3 quality, live playback).
+// Written when speech is generated and when the window closes, never while the pickers are being refilled.
+void MainWindow::saveUiSettings() {
+    auto &st = Config::settings();
+    if (m_backend->count()) st.setValue("last/backend", m_backend->currentData().toString());
+    if (m_voice->count() && !m_voice->currentData().toString().isEmpty()) st.setValue("last/voice", m_voice->currentData().toString());
+    if (m_lang->count()) st.setValue("last/language", m_lang->currentData().toString());
+    st.setValue("last/speed", speedValue());
+    if (m_emotion->count()) st.setValue("last/emotion", m_emotion->currentData().toString());
+    st.setValue("last/intensity", m_intensity->value());
+    st.setValue("last/style", m_style->text());
+    st.setValue("last/bitrate", m_bitrate->currentData().toInt());
+    st.setValue("last/live", m_liveBox->isChecked());
+}
+
+bool MainWindow::hasUnsavedAudio() const {
+    const bool have = !m_audioPath.isEmpty() && QFileInfo::exists(m_audioPath);
+    return have && !m_audioSaved && !m_tempUsed;
 }
 
 void MainWindow::openSettings() {
@@ -2050,6 +2345,32 @@ void MainWindow::openSettings() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
+    if (m_confirmClose && hasUnsavedAudio() && m_state != State::Generating) {
+        const auto a = Msg::question(this, "Audio not saved",
+            "The speech you generated has not been saved or copied out yet, so closing now will lose it.\n\n"
+            "Save keeps a WAV copy. To keep an MP3 instead, press Cancel and use Save MP3.",
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if (a == QMessageBox::Cancel) { e->ignore(); return; }
+        if (a == QMessageBox::Save) {
+            const QString dir = Config::settings().value("lastDir", QStandardPaths::writableLocation(QStandardPaths::MusicLocation)).toString();
+            QString f = QFileDialog::getSaveFileName(this, "Save WAV", dir + "/speech.wav", "WAV audio (*.wav)");
+            if (f.isEmpty()) { e->ignore(); return; }
+            if (!f.endsWith(".wav", Qt::CaseInsensitive)) f += ".wav";
+            if (QFile::exists(f) && !QFile::remove(f)) {
+                setStatus("Could not replace " + QDir::toNativeSeparators(f), true);
+                e->ignore();
+                return;
+            }
+            if (!QFile::copy(m_audioPath, f)) {
+                setStatus("Could not save " + QDir::toNativeSeparators(f), true);
+                e->ignore();
+                return;
+            }
+            Config::settings().setValue("lastDir", QFileInfo(f).absolutePath());
+        }
+    }
+    saveUiSettings();
+    stopLive();
     m_waveTimer.stop();
     ++m_analysisSeq;
     // remember where the window was (its normal, un-maximised rectangle)

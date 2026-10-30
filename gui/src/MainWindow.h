@@ -1,5 +1,6 @@
 #pragma once
 #include <QAudioBuffer>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -28,6 +29,7 @@ class EmptyState;
 class ShellWidget;
 class TitleBar;
 class QaPanel;
+class LiveAudio;
 class ModelLabDialog;
 class Card;
 class AnimatedButton;
@@ -67,6 +69,11 @@ public:
     bool customFrame() const;
     bool preCheckEnabled() const;
     void setPreCheckEnabled(bool on);       // "check pronunciation before generating"
+    void setConfirmClose(bool on) { m_confirmClose = on; }   // ask before closing with unsaved audio (tests switch it off)
+    bool hasUnsavedAudio() const;           // generated audio that was neither saved nor dragged/copied out
+    bool importFile(const QString &path);   // text, markdown, PDF, DOCX or EPUB; PDF/DOCX/EPUB are read by the worker
+    static QString formatDuration(qint64 seconds);   // "45 s", "3:07", "1:02:09"
+    static int estimateSpeechSeconds(int words, double speed);
 
 public slots:
     void startWorker();
@@ -94,6 +101,7 @@ protected:
 private slots:
     void onReady();
     void onProgress(const QString &id, int pct, const QString &msg);
+    void onProgressDetail(const QString &id, const QJsonObject &msg);
     void onFinished(const QString &id, const QString &status, const QJsonObject &r);
     void onWorkerStopped(const QString &reason);
     void importText();
@@ -112,7 +120,7 @@ private:
     enum class Job { None, Synth, Preview, Export, Recheck, Repair };
     void buildUi();
     void updateGlActivity();
-    bool importFile(const QString &path);
+    void importDocument(const QString &path);
     QStringList droppedTextFiles(const QMimeData *m) const;
     bool dragAcceptable(const QMimeData *m) const;
     void dragHint(const QMimeData *m);
@@ -149,6 +157,12 @@ private:
     QString currentLanguage() const;
     double speedValue() const;
     void setSpeedValue(double v);
+    void saveUiSettings();                  // voice, backend, language, speed, feeling, style, MP3 quality, live playback
+    bool textProblem(QString *message) const;   // empty / nothing speakable / over the length limit
+    void updateLiveUi();
+    void stopLive();
+    void finishLiveHandoff();
+    bool busyAux() const { return m_analyzing || m_importing; }
     QJsonObject qaThresholds() const;      // optional advanced override (setting "qaThresholds" = JSON object)
     bool backendHasIpa() const;
     QProcessEnvironment workerEnv() const;
@@ -220,4 +234,18 @@ private:
     bool m_seeking = false;
     QList<QAction *> m_actions;
     QPointer<ModelLabDialog> m_lab;
+
+    // import / long text / live playback / unsaved audio
+    bool m_importing = false;
+    QString m_importId;
+    int m_importSeq = 0;
+    bool m_confirmClose = qEnvironmentVariableIsEmpty("TTS_NO_CLOSE_PROMPT");   // tests set the variable
+    bool m_audioSaved = true;               // false from a fresh generation until it is saved (or dragged/copied out)
+    bool m_langRestored = false;
+    int m_maxChars = 2000000;               // worker's limit (capabilities.max_text_chars)
+    int m_wordCount = 0;
+    QElapsedTimer m_jobClock;
+    LiveAudio *m_live = nullptr;
+    QCheckBox *m_liveBox = nullptr;
+    bool m_liveFailed = false;
 };

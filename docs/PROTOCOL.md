@@ -48,7 +48,7 @@ Audio never travels over the pipe: a *session folder* chosen by the GUI holds `m
 
 New error codes: `CONSENT_REQUIRED`, `LLM_DISABLED`, `LLM_NOT_CONFIGURED`, `LLM_NETWORK_NOT_ALLOWED`, `LLM_AUTH`, `LLM_RATE_LIMIT`,
 `LLM_TIMEOUT`, `LLM_INVALID_OUTPUT`, `LLM_ERROR`. Validation problems are `INVALID_INPUT`; unavailable recogniser: `BACKEND_UNAVAILABLE`.
-Jobs (one at a time, cancellable, with progress): `synthesize`, `export`, `recheck`, `regenerate`, `llm_analyze`, `llm_explain`, `asr_download`.
+Jobs (one at a time, cancellable, with progress): `synthesize`, `export`, `recheck`, `regenerate`, `llm_analyze`, `llm_explain`, `asr_download`, `extract_text`.
 Everything else answers immediately.
 
 | Action | Request (besides `request_id`) | Success fields |
@@ -72,3 +72,14 @@ Everything else answers immediately.
 
 Stale results: the GUI keeps the id of the job it is waiting for and ignores any other final message (and ignores analysis answers for
 text that has since changed). A worker crash completes every pending request with `WORKER_EXITED`.
+
+## Document import and live playback (added later, protocol 2)
+| Action | Request | Success fields |
+|---|---|---|
+| `extract_text` (job) | `path` (.txt .md .pdf .docx .epub) | `text, format, chars, truncated, [pages\|chapters\|paragraphs]`. Errors are `INVALID_INPUT` with a message fit to show (scanned PDF without a text layer, password-protected PDF, old `.doc`, missing `pypdf`, damaged file). Progress events say which page/chapter is being read. Text over `max_text_chars` is cut and `truncated` is true. |
+
+* `capabilities` also returns `max_text_chars` (default 2,000,000; env `SPEECH_ENGINE_MAX_TEXT_CHARS` lowers it, for tests).
+* `synthesize` with `session_dir` and `"stream": true` sends, as each chunk is finished, a progress event with extra fields
+  `chunk_index, chunk_total, chunk_path` (the chunk WAV, 16-bit mono), `pause_ms` (silence that follows it) and `sample_rate`.
+  The GUI feeds these to the speakers so playback starts before the whole text is done. The final file is unchanged and
+  identical either way. Without `stream` no such events are sent.
