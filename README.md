@@ -20,6 +20,8 @@ python -m speech_engine.cli download-model --yes     # ~310 MB fp32 (+~27 MB voi
 ```
 Model files go to `%LOCALAPPDATA%\speech_engine\models` (override: `SPEECH_ENGINE_MODEL_DIR`). Sources: github.com/thewh1teagle/kokoro-onnx releases (`model-files-v1.0`). Sizes are approximate. Licenses: kokoro-onnx MIT, Kokoro weights Apache-2.0 (verify upstream before redistributing). CPU only needed; a few hundred MB RAM.
 
+Azure (optional, no extra package): create an Azure AI Speech resource, then set `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` (for example `eastus`) in the environment and run with `--backend azure`. Voice: `azure_voice` in a profile, else a multilingual neural voice chosen from the profile's gender, or `SPEECH_ENGINE_AZURE_VOICE`. Requests are spaced to the free tier's 20 per 60 s (`SPEECH_ENGINE_AZURE_RPM` to change). Text is sent to Microsoft.
+
 Google (optional): `pip install google-genai`, then set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`) in the environment. Model: `SPEECH_ENGINE_GOOGLE_MODEL` (default `gemini-3.8-flash-tts`, from Google's docs at time of writing — check them, models change).
 
 ## CLI

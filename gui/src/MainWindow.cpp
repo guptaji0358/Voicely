@@ -1177,6 +1177,7 @@ void MainWindow::backendChanged() {
     QString note = "“original” is a prompt/config-defined voice profile";
     note += b == "local" ? " (a weighted blend of stock Kokoro voices) — not a newly trained model. Runs offline."
             : b == "google" ? " (a Google prebuilt voice plus a style instruction) — not a trained model. Text is sent to Google."
+            : b == "azure" ? " (an Azure neural voice) — not a trained model. Text is sent to Microsoft Azure."
                             : ". This is a TEST backend that emits a tone, not speech.";
     note += backendHasIpa() ? " Pronunciation control: respelling and IPA." : " Pronunciation control: respelling only (no IPA).";
     m_voiceNote->setText(note);

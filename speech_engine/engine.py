@@ -31,13 +31,13 @@ def make_backend(name: str) -> Backend:
     if name == "google":
         from .backends.google_backend import GoogleBackend
         return GoogleBackend()
+    if name == "azure":
+        from .backends.azure_backend import AzureBackend
+        return AzureBackend()
     if name == "mock" and os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
         from .backends.mock_backend import MockBackend
         return MockBackend()
-    if name == "mock" and os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
-        from .backends.mock_backend import MockBackend
-        return MockBackend()
-    raise InvalidInputError(f"unknown backend {name!r} (choose 'local' or 'google')")
+    raise InvalidInputError(f"unknown backend {name!r} (choose 'local', 'google' or 'azure')")
 
 
 @dataclass

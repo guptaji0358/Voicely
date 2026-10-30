@@ -48,6 +48,8 @@ class VoiceProfile:
     # --- google (Gemini TTS) controls ---
     google_voice: str = "Sulafat"
     google_style: str = ""
+    # --- azure (Azure AI Speech) controls: blank = a default neural voice picked from ``gender`` ---
+    azure_voice: str = ""
     # --- inter-chunk pauses applied by our pipeline (ms) ---
     paragraph_pause_ms: int = 650
     sentence_pause_ms: int = 280

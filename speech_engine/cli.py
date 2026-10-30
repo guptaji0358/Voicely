@@ -95,7 +95,7 @@ def cmd_voices(args) -> int:
 
 def cmd_test(args) -> int:
     results, ok_all = {}, True
-    names = [args.backend] if args.backend else ["local", "google"]
+    names = [args.backend] if args.backend else ["local", "google", "azure"]
     for n in names:
         st = make_backend(n).status()
         results[n] = {"available": st.available, "network": st.network,
@@ -287,9 +287,9 @@ def cmd_evaluate(args) -> int:
 
 # ---------------------------------------------------------------- parser
 def _add_backend(p, default="local", help_extra=""):
-    p.add_argument("--backend", choices=["local", "google"], default=default,
+    p.add_argument("--backend", choices=["local", "google", "azure"], default=default,
                    help="synthesis backend (default: local/offline; env SPEECH_ENGINE_BACKEND). "
-                        "'google' sends text to Google." + help_extra)
+                        "'google' sends text to Google, 'azure' to Microsoft Azure." + help_extra)
 
 
 def build_parser() -> argparse.ArgumentParser:

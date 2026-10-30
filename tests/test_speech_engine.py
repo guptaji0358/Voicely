@@ -277,6 +277,83 @@ def test_google_status_reports_missing_key_without_value(monkeypatch):
     assert "SECRET-KEY-123" not in json.dumps(GoogleBackend().status().__dict__)
 
 
+# ---- Azure --------------------------------------------------------------
+def azure(responses, **kw):
+    from speech_engine.backends.azure_backend import AzureBackend
+    calls = []
+
+    def post(url, headers, body, timeout):
+        calls.append((url, headers, body))
+        return responses.pop(0)
+    return AzureBackend(post=post, **kw), calls
+
+
+@pytest.fixture
+def azure_env(monkeypatch):
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "SECRET-AZ-KEY")
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    monkeypatch.setattr(threading.Event, "wait", lambda self, t=None: self.is_set())   # no real sleeping
+
+
+def test_azure_request_shape_and_decode(azure_env):
+    be, calls = azure([(200, wav_bytes(480), None)])
+    audio = be.synthesize("Fish & chips A.I", get_profile("original"), SynthParams(speed=1.2), threading.Event())
+    assert audio.sample_rate == RATE and len(audio.pcm) == 960
+    url, headers, body = calls[0]
+    assert url == "https://eastus.tts.speech.microsoft.com/cognitiveservices/v1"
+    assert headers["Ocp-Apim-Subscription-Key"] == "SECRET-AZ-KEY"
+    xml = body.decode()
+    assert "Fish &amp; chips AI" in xml and 'rate="+20%"' in xml and "<voice name='en-US-" in xml
+
+
+def test_azure_profile_voice_overrides_gender_default(azure_env):
+    be, calls = azure([(200, wav_bytes(), None)])
+    prof = get_profile("original").with_overrides(azure_voice="de-DE-SeraphinaMultilingualNeural")
+    be.synthesize("Hallo", prof, SynthParams(), threading.Event())
+    assert "de-DE-SeraphinaMultilingualNeural" in calls[0][2].decode() and "xml:lang='de-DE'" in calls[0][2].decode()
+    with pytest.raises(ConfigurationError):
+        be.synthesize("x", prof.with_overrides(azure_voice="bad voice'><x"), SynthParams(), threading.Event())
+
+
+def test_azure_retries_429_then_succeeds_and_surfaces_rate_limit(azure_env):
+    be, calls = azure([(429, b"slow down", 1.0), (200, wav_bytes(), None)])
+    assert be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event()).pcm
+    assert len(calls) == 2
+    be, _ = azure([(429, b"", None)] * 3)
+    with pytest.raises(RateLimitError):
+        be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event())
+
+
+def test_azure_auth_error_not_retried_and_key_not_leaked(azure_env):
+    be, calls = azure([(401, b"bad key SECRET-AZ-KEY", None)])
+    with pytest.raises(ConfigurationError) as ei:
+        be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event())
+    assert "SECRET-AZ-KEY" not in str(ei.value) and len(calls) == 1
+
+
+def test_azure_spaces_requests_to_the_rate_limit(azure_env, monkeypatch):
+    now = [0.0]
+    be, calls = azure([(200, wav_bytes(), None)] * 3, clock=lambda: now[0], rpm=2)
+
+    def advance(self, t=None):
+        now[0] += t or 0
+        return self.is_set()
+    monkeypatch.setattr(threading.Event, "wait", advance)
+    for _ in range(3):
+        be.synthesize("x y", get_profile("original"), SynthParams(), threading.Event())
+    assert len(calls) == 3 and now[0] >= 60.0 - 1e-6     # third request had to wait for the window to slide
+
+
+def test_azure_status_reports_missing_credentials_without_values(monkeypatch):
+    from speech_engine.backends.azure_backend import AzureBackend
+    monkeypatch.delenv("AZURE_SPEECH_KEY", raising=False); monkeypatch.delenv("AZURE_SPEECH_REGION", raising=False)
+    st = AzureBackend().status()
+    assert not st.available and any("AZURE_SPEECH_KEY" in p for p in st.problems)
+    monkeypatch.setenv("AZURE_SPEECH_KEY", "SECRET-AZ-KEY"); monkeypatch.setenv("AZURE_SPEECH_REGION", "eastus")
+    st = AzureBackend().status()
+    assert st.available and "SECRET-AZ-KEY" not in json.dumps(st.__dict__)
+
+
 # ---- CLI ----------------------------------------------------------------
 def test_cli_voices_json(capsys):
     assert cli.main(["voices", "--json"]) == 0

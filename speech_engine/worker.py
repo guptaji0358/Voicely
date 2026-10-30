@@ -141,7 +141,7 @@ class Worker(QAMixin):
     def health(self, rid, req):
         from .encoders import encoder_status
         from .engine import make_backend
-        names = (["local"] if LOCAL_ENABLED else []) + ["google"] + (["mock"] if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1" else [])
+        names = (["local"] if LOCAL_ENABLED else []) + ["google", "azure"] + (["mock"] if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1" else [])
         backends = {}
         for n in names:
             try:
@@ -180,12 +180,14 @@ class Worker(QAMixin):
                    "sample_path": next((str(samples / f"{n}{e}") for e in (".mp3", ".wav") if (samples / f"{n}{e}").is_file()), ""),
                    "kind": "prompt/config-defined profile (not a trained model)"}
                   for n, p in sorted(profiles.items())]
-        backends = {"google": {"languages": {}, "speed": True, "style": True, "network": True}}
+        backends = {"google": {"languages": {}, "speed": True, "style": True, "network": True},
+                    "azure": {"languages": {}, "speed": True, "style": False, "network": True}}
         if LOCAL_ENABLED:
             backends["local"] = {"languages": LANGUAGES, "speed": True, "style": False, "network": False}
         if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
             backends["mock"] = {"languages": {"en-us": "tone"}, "speed": False, "style": False, "network": False}
-        pron = {"local": {"respelling": True, "ipa": True}, "google": {"respelling": True, "ipa": False}}
+        pron = {"local": {"respelling": True, "ipa": True}, "google": {"respelling": True, "ipa": False},
+                "azure": {"respelling": True, "ipa": False}}
         if os.environ.get("SPEECH_ENGINE_ALLOW_MOCK") == "1":
             pron["mock"] = {"respelling": True, "ipa": False}
         from .emotions import emotion_list
