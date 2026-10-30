@@ -1037,6 +1037,10 @@ void MainWindow::updatePreviewUi() {
 
 QProcessEnvironment MainWindow::workerEnv() const {
     QProcessEnvironment e;
+    // numpy and scipy each bundle OpenBLAS, which commits per-thread buffers at import (~700 MB on 12 cores).
+    // The worker does light signal work only, so one thread is enough.
+    for (const char *k : {"OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"})
+        if (!qEnvironmentVariableIsSet(k)) e.insert(k, "1");
     if (!m_sessionApiKey.isEmpty()) e.insert("GEMINI_API_KEY", m_sessionApiKey);  // persisted only DPAPI-encrypted (SecretStore)
     return e;
 }
